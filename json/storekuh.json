@@ -1,0 +1,129 @@
+[
+    {
+      "nama": "SPOTIFY PREMIUM",
+      "kategori": "STREAMING",
+      "deskripsi": "Akun Spotify Premium",
+      "harga": 10000,
+      "promo": null,
+      "durasi": "30 Hari",
+      "varian": "1 Akun"
+    },
+    {
+      "nama": "CANVA PREMIUM 1 Bulan",
+      "kategori": "EDITING GAMBAR",
+      "deskripsi": "Untuk edit gambar dan desain",
+      "harga": 4000,
+      "promo": null,
+      "durasi": "1 Bulan",
+      "varian": "1 Akun"
+    },
+    {
+      "nama": "CANVA PREMIUM 1 Tahun",
+      "kategori": "EDITING GAMBAR",
+      "deskripsi": "Untuk edit gambar dan desain",
+      "harga": 20000,
+      "promo": null,
+      "durasi": "1 Tahun",
+      "varian": "1 Akun"
+    },
+    {
+      "nama": "CAPCUT 14 Hari",
+      "kategori": "EDITING VIDEO",
+      "deskripsi": "Aplikasi editing video CapCut",
+      "harga": 13000,
+      "promo": null,
+      "durasi": "14 Hari",
+      "varian": "1 Akun"
+    },
+    {
+      "nama": "CAPCUT 28 Hari",
+      "kategori": "EDITING VIDEO",
+      "deskripsi": "Aplikasi editing video CapCut",
+      "harga": 17000,
+      "promo": null,
+      "durasi": "28 Hari",
+      "varian": "1 Akun"
+    },
+    {
+      "nama": "ALIGHT MOTION",
+      "kategori": "EDITING VIDEO",
+      "deskripsi": "Aplikasi motion graphic dan video",
+      "harga": 10000,
+      "promo": null,
+      "durasi": "1 Tahun",
+      "varian": "1 Akun"
+    },
+    {
+      "nama": "MEITU",
+      "kategori": "EDITING GAMBAR",
+      "deskripsi": "Aplikasi edit foto",
+      "harga": 11000,
+      "promo": null,
+      "durasi": "1 Bulan",
+      "varian": "1 Akun"
+    },
+    {
+      "nama": "PICSART",
+      "kategori": "EDITING GAMBAR",
+      "deskripsi": "Aplikasi edit foto",
+      "harga": 10000,
+      "promo": null,
+      "durasi": "1 Bulan",
+      "varian": "1 Akun"
+    },
+    {
+      "nama": "VIU PREMIUM",
+      "kategori": "STREAMING",
+      "deskripsi": "Streaming film dan drama",
+      "harga": 8000,
+      "promo": null,
+      "durasi": "1 Tahun",
+      "varian": "1 Akun"
+    },
+    {
+      "nama": "ZOOM 14 Hari",
+      "kategori": "MEETING ONLINE",
+      "deskripsi": "Akun Zoom Meeting",
+      "harga": 8000,
+      "promo": null,
+      "durasi": "14 Hari",
+      "varian": "1 Akun"
+    },
+    {
+      "nama": "ZOOM 1 Bulan",
+      "kategori": "MEETING ONLINE",
+      "deskripsi": "Akun Zoom Meeting",
+      "harga": 10000,
+      "promo": null,
+      "durasi": "1 Bulan",
+      "varian": "1 Akun"
+    },
+    {
+      "nama": "ADOBE LIGHTROOM PRO",
+      "kategori": "EDITING FOTO",
+      "deskripsi": "Aplikasi edit foto profesional",
+      "harga": 27000,
+      "promo": null,
+      "durasi": "1 Tahun",
+      "varian": "1 Akun"
+    },
+    {
+      "nama": "CAPCUT 7 Hari",
+      "kategori": "EDITING VIDEO",
+      "deskripsi": "Aplikasi editing video CapCut",
+      "harga": 10000,
+      "promo": null,
+      "durasi": "7 Hari",
+      "varian": "1 Akun"
+    },
+    {
+      "nama": "CANVA LIFETIME",
+      "kategori": "EDITING GAMBAR",
+      "deskripsi": "Canva Lifetime dengan garansi",
+      "harga": 30000,
+      "promo": null,
+      "durasi": "Lifetime",
+      "varian": "1 Akun"
+    }
+  ]
+  

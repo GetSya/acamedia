@@ -1,0 +1,222 @@
+{
+  "users": {
+    "6288213292687@s.whatsapp.net": {
+      "name": "+62 882-1329-2687",
+      "exp": 534,
+      "money": 0,
+      "level": 1,
+      "limit": 20,
+      "age": -1,
+      "regTime": -1,
+      "afk": -1,
+      "afkReason": "",
+      "warn": 0,
+      "role": "Newbie ㋡",
+      "premium": false,
+      "premiumTime": 0,
+      "registered": false,
+      "banned": false,
+      "autolevelup": false
+    },
+    "6288214772441@s.whatsapp.net": {
+      "name": "arasya",
+      "exp": 2101,
+      "money": 0,
+      "level": 1,
+      "limit": 20,
+      "age": 19,
+      "regTime": 1769660866066,
+      "afk": -1,
+      "afkReason": "",
+      "warn": 0,
+      "role": "Newbie ㋡",
+      "premium": false,
+      "premiumTime": 0,
+      "registered": true,
+      "banned": false,
+      "autolevelup": false
+    },
+    "6285183221210@s.whatsapp.net": {
+      "name": "AcaMedia",
+      "exp": 507,
+      "money": 0,
+      "level": 1,
+      "limit": 14,
+      "age": -1,
+      "regTime": -1,
+      "afk": -1,
+      "afkReason": "",
+      "warn": 0,
+      "role": "Newbie ㋡",
+      "premium": false,
+      "premiumTime": 0,
+      "registered": false,
+      "banned": false,
+      "autolevelup": false
+    },
+    "6283111604909@s.whatsapp.net": {
+      "name": "Rahma Dwi Utari",
+      "exp": 11,
+      "money": 0,
+      "level": 1,
+      "limit": 20,
+      "age": -1,
+      "regTime": -1,
+      "afk": -1,
+      "afkReason": "",
+      "warn": 0,
+      "role": "Newbie ㋡",
+      "premium": false,
+      "premiumTime": 0,
+      "registered": false,
+      "banned": false,
+      "autolevelup": false
+    },
+    "6289503816765@s.whatsapp.net": {
+      "name": "Dhieraaa",
+      "exp": 25,
+      "money": 0,
+      "level": 1,
+      "limit": 20,
+      "age": -1,
+      "regTime": -1,
+      "afk": -1,
+      "afkReason": "",
+      "warn": 0,
+      "role": "Newbie ㋡",
+      "premium": false,
+      "premiumTime": 0,
+      "registered": false,
+      "banned": false,
+      "autolevelup": false
+    },
+    "6282191674713@s.whatsapp.net": {
+      "name": "Dytzx",
+      "exp": 9,
+      "money": 0,
+      "level": 1,
+      "limit": 20,
+      "age": -1,
+      "regTime": -1,
+      "afk": -1,
+      "afkReason": "",
+      "warn": 0,
+      "role": "Newbie ㋡",
+      "premium": false,
+      "premiumTime": 0,
+      "registered": false,
+      "banned": false,
+      "autolevelup": false
+    }
+  },
+  "chats": {
+    "120363346345553362@g.us": {
+      "sWelcome": "",
+      "sBye": "",
+      "sPromote": "",
+      "sDemote": "",
+      "isBanned": false,
+      "welcome": false,
+      "detect": false,
+      "delete": false
+    }
+  },
+  "stats": {
+    "main-menu.js": {
+      "total": 11,
+      "success": 11,
+      "last": 1769701027599,
+      "lastSuccess": 1769701027599
+    },
+    "xp-profile.js": {
+      "total": 2,
+      "success": 2,
+      "last": 1769659114950,
+      "lastSuccess": 1769659114950
+    },
+    "ai-editimg.js": {
+      "total": 11,
+      "success": 11,
+      "last": 1769663121008,
+      "lastSuccess": 1769663121008
+    },
+    "play.js": {
+      "total": 4,
+      "success": 4,
+      "last": 1769661611889,
+      "lastSuccess": 1769661611889
+    },
+    "xp-register.js": {
+      "total": 2,
+      "success": 2,
+      "last": 1769660866788,
+      "lastSuccess": 1769660866788
+    },
+    "tools-toimg.js": {
+      "total": 2,
+      "success": 2,
+      "last": 1769661531698,
+      "lastSuccess": 1769661531698
+    },
+    "store-addlist.js": {
+      "total": 3,
+      "success": 3,
+      "last": 1769661581369,
+      "lastSuccess": 1769661581369
+    },
+    "main-creator.js": {
+      "total": 2,
+      "success": 2,
+      "last": 1769661637104,
+      "lastSuccess": 1769661637104
+    },
+    "owner-exec.js": {
+      "total": 10,
+      "success": 10,
+      "last": 1769662135354,
+      "lastSuccess": 1769662135354
+    },
+    "ai.js": {
+      "total": 2,
+      "success": 2,
+      "last": 1769661962781,
+      "lastSuccess": 1769661962781
+    },
+    "brat.js": {
+      "total": 2,
+      "success": 2,
+      "last": 1769667539985,
+      "lastSuccess": 1769667539985
+    },
+    "__cek.js": {
+      "total": 38,
+      "success": 36,
+      "last": 1769700861994,
+      "lastSuccess": 1769700861994
+    },
+    "__support.js": {
+      "total": 4,
+      "success": 4,
+      "last": 1769701123191,
+      "lastSuccess": 1769701123191
+    }
+  },
+  "msgs": {
+    "andre": {
+      "text": "andre"
+    }
+  },
+  "sticker": {},
+  "settings": {
+    "6288213292687@s.whatsapp.net": {
+      "public": true,
+      "autoread": true,
+      "anticall": true
+    },
+    "6285183221210@s.whatsapp.net": {
+      "public": true,
+      "autoread": true,
+      "anticall": true
+    }
+  }
+}
