@@ -1,6 +1,14 @@
 import fs from 'fs'
 import path from 'path'
 import axios from 'axios'
+import { createClient } from '@supabase/supabase-js'
+
+// --- SUPABASE CONFIG ---
+const SUPABASE_URL = 'https://xteposmfavnnevgqivub.supabase.co'
+const SUPABASE_KEY = 'sb_publishable__iD2NyZNQa7HVnreBtYuow__aHIr6ie'
+const USER_ID = '6db91251-7426-491b-bc87-121556bc2f1b'
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
 // --- GLOBAL SETTINGS ---
 const SETTINGS = {
@@ -12,15 +20,50 @@ const SETTINGS = {
     jsonPath: path.join(process.cwd(), 'json', 'storekuh.json')
 }
 
-// --- UTILITY LOGIC ---
-const loadDB = () => {
+// --- SUPABASE LOGIC ---
+const loadDB = async () => {
     try {
-        if (!fs.existsSync(SETTINGS.jsonPath)) return []
-        return JSON.parse(fs.readFileSync(SETTINGS.jsonPath, 'utf-8'))
-    } catch { return [] }
+        // Ambil data dari Supabase
+        const { data, error } = await supabase
+            .from('master_data')
+            .select('daftar_item')
+            .eq('user_id', USER_ID)
+            .single()
+        
+        if (error) {
+            console.error('Error loading from Supabase:', error)
+            return []
+        }
+        
+        // daftar_item adalah array JSON, kembalikan array kosong jika null
+        return data?.daftar_item || []
+    } catch (error) {
+        console.error('Error in loadDB:', error)
+        return []
+    }
 }
 
-const saveDB = (data) => fs.writeFileSync(SETTINGS.jsonPath, JSON.stringify(data, null, 2))
+const saveDB = async (data) => {
+    try {
+        // Update data ke Supabase
+        const { error } = await supabase
+            .from('master_data')
+            .update({ 
+                daftar_item: data,
+                updated_at: new Date().toISOString()
+            })
+            .eq('user_id', USER_ID)
+        
+        if (error) {
+            console.error('Error saving to Supabase:', error)
+            return false
+        }
+        return true
+    } catch (error) {
+        console.error('Error in saveDB:', error)
+        return false
+    }
+}
 
 // Rumus hitung biaya admin QRIS
 const getFinalPrice = (price) => {
@@ -36,7 +79,7 @@ const getFinalPrice = (price) => {
 const formatIDR = (num) => 'Rp ' + num.toLocaleString('id-ID')
 
 let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
-    let db = loadDB()
+    let db = await loadDB() // Ubah jadi async
     let args = text.trim().split(/ +/)
     let subCommand = args[0] ? args[0].toLowerCase() : ''
 
@@ -48,23 +91,42 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
         if (!input || input.length < 6) return m.reply(`*Format Owner (Add):*\n${usedPrefix}store add Nama|Kategori|Deskripsi|Harga|Promo(Kosongkan jika tak ada)|Durasi|Varian`)
         
         let [nama, kategori, deskripsi, harga, promo, durasi, varian] = input
-        db.push({
-            id: Date.now(),
-            nama, kategori, deskripsi, 
-            harga: parseInt(harga.replace(/\D/g, '')),
+        
+        // Buat item sesuai format Supabase
+        const newItem = {
+            id: Date.now().toString(), // Generate unique ID
+            nama_barang: nama,
+            kategori: kategori,
+            deskripsi: deskripsi,
+            harga_jual: parseInt(harga.replace(/\D/g, '')),
             promo: promo ? parseInt(promo.replace(/\D/g, '')) : 0,
-            durasi, varian
-        })
-        saveDB(db)
-        return m.reply(`✨ *Produk "${nama}" Berhasil Disimpan!*`)
+            durasi: durasi,
+            varian: varian,
+            stok: 999, // Default stok
+            satuan: "Pcs", // Default satuan
+            harga_beli: 0, // Default harga beli
+            kode_barang: "" // Default kode barang
+        }
+        
+        db.push(newItem)
+        const success = await saveDB(db)
+        if (success) {
+            return m.reply(`✨ *Produk "${nama}" Berhasil Disimpan ke Database!*`)
+        } else {
+            return m.reply('❌ Gagal menyimpan produk ke database.')
+        }
     }
 
     if (subCommand === 'del' && isOwner) {
         let index = parseInt(args[1]) - 1
         if (db[index]) {
             let removed = db.splice(index, 1)
-            saveDB(db)
-            return m.reply(`🗑️ *"${removed[0].nama}" berhasil dihapus.*`)
+            const success = await saveDB(db)
+            if (success) {
+                return m.reply(`🗑️ *"${removed[0].nama_barang}" berhasil dihapus dari database.*`)
+            } else {
+                return m.reply('❌ Gagal menghapus produk dari database.')
+            }
         }
         return m.reply('❌ Nomor produk tidak ditemukan.')
     }
@@ -77,17 +139,18 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
         let item = db[index]
         if (!item) return m.reply(`*Pilih produk:* .beli 1`)
 
-        let hrg = item.promo > 0 ? item.promo : item.harga
+        // Gunakan promo jika ada, jika tidak gunakan harga_jual
+        let hrg = item.promo > 0 ? item.promo : item.harga_jual
         let cost = getFinalPrice(hrg)
         
         await m.reply('🔄 *Menyiapkan QRIS Aktif...*')
 
         try {
-            const res = await createQris(cost.total, item.nama)
+            const res = await createQris(cost.total, item.nama_barang)
             let exp = new Date(Date.now() + (SETTINGS.expired * 60000))
 
             let caption = `┌───〔 *PEMBAYARAN* 〕───\n`
-            caption += `│ 📦 *Item:* ${item.nama}\n`
+            caption += `│ 📦 *Item:* ${item.nama_barang}\n`
             caption += `│ 💰 *Harga:* ${formatIDR(cost.base)}\n`
             caption += `│ 🧾 *Biaya Admin:* ${formatIDR(cost.tax)}\n`
             caption += `│ 📉 *Promo:* ${item.promo > 0 ? 'Aktif' : 'Tidak'}\n`
@@ -113,11 +176,14 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
                 if (status && status.status === 'completed') {
                     clearInterval(check)
                     await conn.sendMessage(m.chat, { delete: msg.key })
-                    m.reply(`✅ *ORDER SUKSES!*\n\nPembayaran untuk *${item.nama}* senilai *${formatIDR(cost.total)}* telah kami terima.\n\n_Mohon hubungi Owner segera._`)
+                    m.reply(`✅ *ORDER SUKSES!*\n\nPembayaran untuk *${item.nama_barang}* senilai *${formatIDR(cost.total)}* telah kami terima.\n\n_Mohon hubungi Owner segera._`)
                 }
             }, 7000)
             return
-        } catch (e) { return m.reply('❌ Sistem Payment sedang maintenance.') }
+        } catch (e) { 
+            console.error(e)
+            return m.reply('❌ Sistem Payment sedang maintenance.') 
+        }
     }
 
     // ==========================================
@@ -130,17 +196,19 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
         if (!isNaN(subCommand)) {
             item = db[parseInt(subCommand) - 1] // Berdasarkan Angka
         } else {
-            item = db.find(v => v.nama.toLowerCase().includes(subCommand)) // Berdasarkan Pencarian Kata
+            item = db.find(v => v.nama_barang.toLowerCase().includes(subCommand)) // Berdasarkan Pencarian Kata
         }
 
         if (item) {
-            let p = getFinalPrice(item.promo > 0 ? item.promo : item.harga)
+            let hrg = item.promo > 0 ? item.promo : item.harga_jual
+            let p = getFinalPrice(hrg)
             let textDetail = `🔖 *INFO PRODUK*\n\n`
-            textDetail += `🏷️ *${item.nama}*\n`
+            textDetail += `🏷️ *${item.nama_barang}*\n`
             textDetail += `📦 *Kategori:* ${item.kategori}\n`
-            textDetail += `⏳ *Durasi:* ${item.durasi}\n`
-            textDetail += `📋 *Varian:* ${item.varian}\n\n`
-            textDetail += `📝 *Keterangan:* \n${item.deskripsi}\n\n`
+            textDetail += `⏳ *Durasi:* ${item.durasi || '-'}\n`
+            textDetail += `📋 *Varian:* ${item.varian || '-'}\n`
+            textDetail += `📊 *Stok:* ${item.stok || 0}\n\n`
+            textDetail += `📝 *Keterangan:* \n${item.deskripsi || '-'}\n\n`
             textDetail += `💰 *TOTAL BAYAR:* *${formatIDR(p.total)}*\n`
             textDetail += `_(Termasuk PPN & Admin)_\n\n`
             textDetail += `🛒 Ketik *.beli ${db.indexOf(item) + 1}*`
@@ -154,8 +222,9 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
     let sections = {}
     db.forEach((v, i) => {
         if (!sections[v.kategori]) sections[v.kategori] = []
-        let p = getFinalPrice(v.promo > 0 ? v.promo : v.harga)
-        sections[v.kategori].push(`│ ${i + 1}. ${v.nama} \n│    ╰ ${formatIDR(p.total)}`)
+        let hrg = v.promo > 0 ? v.promo : v.harga_jual
+        let p = getFinalPrice(hrg)
+        sections[v.kategori].push(`│ ${i + 1}. ${v.nama_barang} \n│    ╰ ${formatIDR(p.total)}`)
     })
 
     let menuToko = `🏪 *WELCOME TO ACAMEDIA*\n\n`
