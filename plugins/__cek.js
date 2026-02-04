@@ -23,20 +23,18 @@ const SETTINGS = {
 // --- SUPABASE LOGIC ---
 const loadDB = async () => {
     try {
-        // Menggunakan maybeSingle() untuk menghindari error saat tidak ada data
         const { data, error } = await supabase
             .from('master_data')
             .select('daftar_item')
             .eq('user_id', USER_ID)
-            .maybeSingle() // Changed from .single()
+            .maybeSingle()
         
         if (error) {
             console.error('Error loading from Supabase:', error)
             return []
         }
         
-        // Jika data null (tidak ada row), return array kosong
-        // Jika ada row, return daftar_item atau array kosong jika null
+        console.log('Data loaded from Supabase:', data?.daftar_item?.length || 0, 'items')
         return data?.daftar_item || []
     } catch (error) {
         console.error('Error in loadDB:', error)
@@ -46,7 +44,6 @@ const loadDB = async () => {
 
 const saveDB = async (data) => {
     try {
-        // Cek apakah row untuk user_id ini sudah ada
         const { data: existingData, error: checkError } = await supabase
             .from('master_data')
             .select('id')
@@ -60,7 +57,6 @@ const saveDB = async (data) => {
         
         let result
         if (existingData) {
-            // Jika row sudah ada, update
             result = await supabase
                 .from('master_data')
                 .update({ 
@@ -69,7 +65,6 @@ const saveDB = async (data) => {
                 })
                 .eq('user_id', USER_ID)
         } else {
-            // Jika row belum ada, insert baru
             result = await supabase
                 .from('master_data')
                 .insert({ 
@@ -84,6 +79,7 @@ const saveDB = async (data) => {
             console.error('Error saving to Supabase:', result.error)
             return false
         }
+        console.log('Data saved to Supabase:', data.length, 'items')
         return true
     } catch (error) {
         console.error('Error in saveDB:', error)
@@ -105,7 +101,7 @@ const getFinalPrice = (price) => {
 const formatIDR = (num) => 'Rp ' + num.toLocaleString('id-ID')
 
 let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
-    let db = await loadDB() // Pastikan await karena loadDB async
+    let db = await loadDB()
     let args = text.trim().split(/ +/)
     let subCommand = args[0] ? args[0].toLowerCase() : ''
 
@@ -114,30 +110,28 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
     // ==========================================
     if (subCommand === 'add' && isOwner) {
         let input = text.split('add')[1]?.split('|').map(v => v.trim())
-        if (!input || input.length < 6) return m.reply(`*Format Owner (Add):*\n${usedPrefix}store add Nama|Kategori|Deskripsi|Harga|Promo(Kosongkan jika tak ada)|Durasi|Varian`)
+        if (!input || input.length < 6) return m.reply(`*Format Owner (Add):*\n${usedPrefix}store add nama_barang|kategori|harga_jual|stok|satuan|kode_barang\n\n*Contoh:*\n${usedPrefix}store add SPOTIFY PREMIUM 30 HARI|SOFTWARE|10000|999|AKUN|SPOTIFYPREM001`)
         
-        let [nama, kategori, deskripsi, harga, promo, durasi, varian] = input
+        let [nama_barang, kategori, harga_jual, stok, satuan, kode_barang] = input
         
-        // Buat item baru dengan format lengkap untuk Supabase
+        // Buat item baru sesuai format database
         const newItem = {
-            id: Date.now().toString(),
-            nama_barang: nama,
-            kategori: kategori,
-            deskripsi: deskripsi || '-',
-            harga_jual: parseInt(harga.replace(/\D/g, '')),
-            promo: promo ? parseInt(promo.replace(/\D/g, '')) : 0,
-            durasi: durasi || '-',
-            varian: varian || '-',
-            stok: 999,
-            satuan: "Pcs",
+            id: `ITM-${Date.now().toString().slice(-8)}`,
+            nama_barang: nama_barang,
+            kategori: kategori || 'SOFTWARE',
+            harga_jual: parseInt(harga_jual.replace(/\D/g, '')) || 0,
             harga_beli: 0,
-            kode_barang: ""
+            stok: parseInt(stok.replace(/\D/g, '')) || 999,
+            satuan: satuan || 'AKUN',
+            tipe_harga: 'SINGLE',
+            kode_barang: kode_barang || `ITM-${Date.now().toString().slice(-5)}`,
+            multi_units: []
         }
         
         db.push(newItem)
         const success = await saveDB(db)
         if (success) {
-            return m.reply(`✨ *Produk "${nama}" Berhasil Disimpan ke Database!*\nID: ${newItem.id}`)
+            return m.reply(`✨ *Produk "${nama_barang}" Berhasil Disimpan!*\n📦 Stok: ${newItem.stok}\n💰 Harga: ${formatIDR(newItem.harga_jual)}\n🏷️ Kode: ${newItem.kode_barang}`)
         } else {
             return m.reply('❌ Gagal menyimpan produk ke database.')
         }
@@ -149,7 +143,7 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
             let removed = db.splice(index, 1)
             const success = await saveDB(db)
             if (success) {
-                return m.reply(`🗑️ *"${removed[0].nama_barang}" berhasil dihapus dari database.*`)
+                return m.reply(`🗑️ *"${removed[0].nama_barang}" berhasil dihapus.*`)
             } else {
                 return m.reply('❌ Gagal menghapus produk dari database.')
             }
@@ -165,11 +159,37 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
             listText += `${i + 1}. ${item.nama_barang}\n`
             listText += `   📦 Kategori: ${item.kategori}\n`
             listText += `   💰 Harga: ${formatIDR(item.harga_jual)}\n`
-            listText += `   🏷️ Promo: ${item.promo > 0 ? formatIDR(item.promo) : 'Tidak'}\n`
-            listText += `   📊 Stok: ${item.stok}\n`
+            listText += `   📊 Stok: ${item.stok} ${item.satuan}\n`
+            listText += `   🏷️ Kode: ${item.kode_barang}\n`
             listText += `   ──────────────\n`
         })
         return m.reply(listText)
+    }
+
+    if (subCommand === 'update' && isOwner) {
+        let index = parseInt(args[1]) - 1
+        let field = args[2]
+        let value = args.slice(3).join(' ')
+        
+        if (index < 0 || !db[index] || !field || !value) {
+            return m.reply(`*Format Update:*\n${usedPrefix}store update [nomor] [field] [value]\n\n*Field yang tersedia:*\nnama_barang, kategori, harga_jual, stok, satuan, kode_barang\n\n*Contoh:*\n${usedPrefix}store update 1 stok 50`)
+        }
+        
+        let item = db[index]
+        let oldValue = item[field]
+        
+        if (field === 'harga_jual' || field === 'stok') {
+            item[field] = parseInt(value.replace(/\D/g, '')) || 0
+        } else {
+            item[field] = value
+        }
+        
+        const success = await saveDB(db)
+        if (success) {
+            return m.reply(`✏️ *Produk "${item.nama_barang}" Diupdate!*\n📝 ${field}: ${oldValue} → ${item[field]}`)
+        } else {
+            return m.reply('❌ Gagal mengupdate produk.')
+        }
     }
 
     // ==========================================
@@ -180,13 +200,12 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
         let item = db[index]
         if (!item) return m.reply(`❌ Produk tidak ditemukan.\n*Pilih produk:* .beli 1\n*Lihat produk:* .store`)
 
-        // Kurangi stok jika tersedia
+        // Cek stok
         if (item.stok <= 0) {
             return m.reply('❌ Maaf, stok produk ini habis.')
         }
         
-        let hrg = item.promo > 0 ? item.promo : item.harga_jual
-        let cost = getFinalPrice(hrg)
+        let cost = getFinalPrice(item.harga_jual)
         
         await m.reply('🔄 *Menyiapkan QRIS Aktif...*')
 
@@ -196,10 +215,11 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
 
             let caption = `┌───〔 *PEMBAYARAN* 〕───\n`
             caption += `│ 📦 *Item:* ${item.nama_barang}\n`
+            caption += `│ 🏷️ *Kode:* ${item.kode_barang}\n`
             caption += `│ 📦 *Kategori:* ${item.kategori}\n`
+            caption += `│ 📋 *Satuan:* ${item.satuan}\n`
             caption += `│ 💰 *Harga:* ${formatIDR(cost.base)}\n`
             caption += `│ 🧾 *Biaya Admin:* ${formatIDR(cost.tax)}\n`
-            caption += `│ 📉 *Promo:* ${item.promo > 0 ? 'Aktif' : 'Tidak'}\n`
             caption += `│ 📊 *Stok Tersedia:* ${item.stok}\n`
             caption += `├─────────────────\n`
             caption += `│ 🏦 *Total:* *${formatIDR(cost.total)}*\n`
@@ -233,7 +253,7 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
                     item.stok = Math.max(0, item.stok - 1)
                     await saveDB(db)
                     
-                    m.reply(`✅ *ORDER SUKSES!*\n\nPembayaran untuk *${item.nama_barang}* senilai *${formatIDR(cost.total)}* telah kami terima.\nStok tersisa: ${item.stok}\n\n_Mohon hubungi Owner segera._`)
+                    m.reply(`✅ *ORDER SUKSES!*\n\n📦 *Item:* ${item.nama_barang}\n💰 *Total Bayar:* ${formatIDR(cost.total)}\n📊 *Stok Tersisa:* ${item.stok}\n🆔 *Kode Produk:* ${item.kode_barang}\n\n_Mohon hubungi Owner untuk mendapatkan produk._`)
                 }
             }, 7000)
             return
@@ -247,31 +267,30 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
     // LOGIKA NAVIGATION (STORE & DETAIL)
     // ==========================================
     
-    // Logika Pintar: Jika ketik ".store 1" atau ".store netflix"
-    if (subCommand && subCommand !== 'add' && subCommand !== 'del' && subCommand !== 'list') {
+    // Logika Pintar: Jika ketik ".store 1" atau ".store spotify"
+    if (subCommand && subCommand !== 'add' && subCommand !== 'del' && subCommand !== 'list' && subCommand !== 'update') {
         let item
         if (!isNaN(subCommand)) {
             item = db[parseInt(subCommand) - 1] // Berdasarkan Angka
         } else {
-            item = db.find(v => v.nama_barang.toLowerCase().includes(subCommand)) // Berdasarkan Pencarian Kata
+            // Cari berdasarkan nama atau kode barang
+            item = db.find(v => 
+                v.nama_barang.toLowerCase().includes(subCommand) ||
+                v.kode_barang.toLowerCase().includes(subCommand)
+            )
         }
 
         if (item) {
-            let hrg = item.promo > 0 ? item.promo : item.harga_jual
-            let p = getFinalPrice(hrg)
+            let cost = getFinalPrice(item.harga_jual)
             let textDetail = `🔖 *INFO PRODUK*\n\n`
             textDetail += `🏷️ *${item.nama_barang}*\n`
             textDetail += `📦 *Kategori:* ${item.kategori}\n`
-            textDetail += `⏳ *Durasi:* ${item.durasi || '-'}\n`
-            textDetail += `📋 *Varian:* ${item.varian || '-'}\n`
-            textDetail += `📊 *Stok:* ${item.stok || 0} ${item.satuan || ''}\n\n`
-            textDetail += `📝 *Keterangan:* \n${item.deskripsi || '-'}\n\n`
-            textDetail += `💰 *Harga Normal:* ${formatIDR(item.harga_jual)}\n`
-            if (item.promo > 0) {
-                textDetail += `💰 *Harga Promo:* ${formatIDR(item.promo)}\n`
-            }
-            textDetail += `🧾 *Biaya Admin:* ${formatIDR(p.tax)}\n`
-            textDetail += `🏦 *TOTAL BAYAR:* *${formatIDR(p.total)}*\n`
+            textDetail += `📋 *Satuan:* ${item.satuan}\n`
+            textDetail += `📊 *Stok:* ${item.stok}\n`
+            textDetail += `🆔 *Kode:* ${item.kode_barang}\n\n`
+            textDetail += `💰 *Harga:* ${formatIDR(item.harga_jual)}\n`
+            textDetail += `🧾 *Biaya Admin:* ${formatIDR(cost.tax)}\n`
+            textDetail += `🏦 *TOTAL BAYAR:* *${formatIDR(cost.total)}*\n`
             textDetail += `_(Termasuk PPN & Admin)_\n\n`
             textDetail += `🛒 Ketik *.beli ${db.indexOf(item) + 1}* untuk membeli`
             return m.reply(textDetail)
@@ -281,13 +300,16 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
     // CATALOG UTAMA
     if (db.length === 0) return m.reply('🏪 *TOKO KOSONG*\n\nBelum ada produk yang tersedia saat ini.\n\n_Mohon hubungi admin untuk informasi lebih lanjut._')
     
+    console.log('Showing catalog with', db.length, 'items')
+    
     let sections = {}
-    db.forEach((v, i) => {
-        if (!sections[v.kategori]) sections[v.kategori] = []
-        let hrg = v.promo > 0 ? v.promo : v.harga_jual
-        let p = getFinalPrice(hrg)
-        let promoBadge = v.promo > 0 ? '🔥 ' : ''
-        sections[v.kategori].push(`│ ${i + 1}. ${promoBadge}${v.nama_barang} \n│    ╰ ${formatIDR(p.total)} (Stok: ${v.stok})`)
+    db.forEach((item, i) => {
+        const kategori = item.kategori || 'UNCATEGORIZED'
+        if (!sections[kategori]) sections[kategori] = []
+        
+        let cost = getFinalPrice(item.harga_jual)
+        
+        sections[kategori].push(`│ ${i + 1}. ${item.nama_barang}\n│    ╰ ${formatIDR(cost.total)} | Stok: ${item.stok} ${item.satuan}`)
     })
 
     let menuToko = `🏪 *WELCOME TO ACAMEDIA*\n\n`
@@ -303,8 +325,9 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
 
     if (isOwner) {
         menuToko += `\n\n🛠️ *Admin Commands:*\n`
-        menuToko += `• .store add [data]\n`
+        menuToko += `• .store add nama|kategori|harga|stok|satuan|kode\n`
         menuToko += `• .store del [nomor]\n`
+        menuToko += `• .store update [nomor] [field] [value]\n`
         menuToko += `• .store list`
     }
 
