@@ -4,7 +4,7 @@ import { createClient } from '@supabase/supabase-js'
 // --- SUPABASE CONFIG ---
 const SUPABASE_URL = 'https://xteposmfavnnevgqivub.supabase.co'
 const SUPABASE_KEY = 'sb_publishable__iD2NyZNQa7HVnreBtYuow__aHIr6ie'
-const USER_ID = '6db91251-7426-491b-bc87-121556bc2f1b'
+const USER_ID = 'ff1c94f7-b70b-4ae4-aaf1-d02227638ef2'
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
