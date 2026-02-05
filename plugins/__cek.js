@@ -28,19 +28,6 @@ const DESIGN = {
         info: 'ℹ️',
         money: '💎'
     },
-    borders: {
-        topLeft: '╭',
-        topRight: '╮',
-        bottomLeft: '╰',
-        bottomRight: '╯',
-        horizontal: '─',
-        vertical: '│',
-        middleLeft: '├',
-        middleRight: '┤',
-        middleTop: '┬',
-        middleBottom: '┴',
-        cross: '┼'
-    },
     icons: {
         store: '🏪',
         product: '📦',
@@ -60,9 +47,16 @@ const DESIGN = {
         list: '📋',
         add: '➕',
         delete: '🗑️',
-        home: '🏠'
+        home: '🏠',
+        back: '↩️',
+        next: '➡️',
+        prev: '⬅️',
+        page: '📄'
     }
 }
+
+// --- STATE MANAGEMENT ---
+let userStates = new Map()
 
 // --- SUPABASE LOGIC ---
 const loadDB = async () => {
@@ -141,64 +135,187 @@ const getFinalPrice = (price) => {
 const formatIDR = (num) => 'Rp' + num.toLocaleString('id-ID')
 
 const createHeader = (title, subtitle = '') => {
-    const width = 40
-    const titleLine = ` ${title} `.padStart((width - title.length) / 2 + title.length, '═').padEnd(width, '═')
-    
-    let header = `╔${'═'.repeat(width)}╗\n`
-    header += `║${' '.repeat(width)}║\n`
-    header += `║${titleLine}║\n`
-    if (subtitle) {
-        const subtitleLine = ` ${subtitle} `.padStart((width - subtitle.length) / 2 + subtitle.length, ' ').padEnd(width, ' ')
-        header += `║${subtitleLine}║\n`
-    }
-    header += `║${' '.repeat(width)}║\n`
-    header += `╚${'═'.repeat(width)}╝`
-    
-    return header
+    return `╔══════════════════════════════╗
+║         ${DESIGN.icons.store}          ║
+║       *ACAMEDIA STORE*       ║
+╠══════════════════════════════╣
+║ ${title.toUpperCase().padEnd(28)} ║
+${subtitle ? `║ ${subtitle.padEnd(28)} ║\n╠══════════════════════════════╣` : '╠══════════════════════════════╣'}`
 }
 
-const createSection = (title, content, icon = '') => {
-    const section = `${icon ? `${icon} ` : ''}*${title}*\n${content}\n`
-    return section
-}
-
-const createProductCard = (item, index, showDetail = false) => {
+const createProductCard = (item, index, showDetail = false, globalIndex = null) => {
     const cost = getFinalPrice(item.harga_jual)
     
     if (showDetail) {
-        return `┌──────────────────────────────┐
-│ ${DESIGN.icons.product} *${item.nama_barang}*
-├──────────────────────────────┤
-│ ${DESIGN.icons.category} Kategori: ${item.kategori}
-│ ${DESIGN.icons.code} Kode: ${item.kode_barang}
-│ ${DESIGN.icons.stock} Stok: ${item.stok} ${item.satuan}
-├──────────────────────────────┤
-│ ${DESIGN.icons.price} Harga: ${formatIDR(item.harga_jual)}
-│ ${DESIGN.icons.admin} Admin: ${formatIDR(cost.tax)}
-│ ${DESIGN.colors.money} *TOTAL: ${formatIDR(cost.total)}*
-└──────────────────────────────┘
-${DESIGN.icons.cart} *Beli:* \`.beli ${index + 1}\``
+        return `╔══════════════════════════════╗
+║ ${DESIGN.icons.product} *${item.nama_barang}*
+╠══════════════════════════════╣
+║ ${DESIGN.icons.category} Kategori: ${item.kategori}
+║ ${DESIGN.icons.code} Kode: ${item.kode_barang}
+║ ${DESIGN.icons.stock} Stok: ${item.stok} ${item.satuan}
+╠══════════════════════════════╣
+║ ${DESIGN.icons.price} Harga: ${formatIDR(item.harga_jual)}
+║ ${DESIGN.icons.admin} Admin: ${formatIDR(cost.tax)}
+║ ${DESIGN.colors.money} *TOTAL: ${formatIDR(cost.total)}*
+╚══════════════════════════════╝
+${DESIGN.icons.cart} *Beli:* \`.beli ${globalIndex !== null ? globalIndex : index + 1}\``
     }
     
-    return `${index + 1}. ${DESIGN.icons.product} ${item.nama_barang}
-   ${DESIGN.icons.price} ${formatIDR(cost.total)} │ ${DESIGN.icons.stock} ${item.stok}`
+    const itemNumber = globalIndex !== null ? globalIndex : index + 1
+    return `${DESIGN.icons.product} *${itemNumber}.* ${item.nama_barang}
+   ${DESIGN.icons.price} ${formatIDR(cost.total)} | ${DESIGN.icons.stock} ${item.stok} | ${DESIGN.icons.code} ${item.kode_barang}`
 }
 
-const createPaymentBox = (item, cost) => {
-    const exp = new Date(Date.now() + (SETTINGS.expired * 60000))
+// --- CATEGORY FUNCTIONS ---
+const groupByCategory = (products) => {
+    const categories = {}
     
-    return `╔══════════════════════════════╗
-║     ${DESIGN.icons.payment} *PEMBAYARAN*     ║
-╠══════════════════════════════╣
-║ ${DESIGN.icons.product} Produk: ${item.nama_barang}
-║ ${DESIGN.icons.code} Kode: ${item.kode_barang}
-╠══════════════════════════════╣
-║ ${DESIGN.icons.price} Harga: ${formatIDR(cost.base)}
-║ ${DESIGN.icons.admin} Admin: ${formatIDR(cost.tax)}
-╠══════════════════════════════╣
-║ ${DESIGN.colors.money} *TOTAL: ${formatIDR(cost.total)}*
-║ ${DESIGN.icons.time} Berlaku: ${exp.toLocaleTimeString('id-ID')}
-╚══════════════════════════════╝`
+    products.forEach((product, index) => {
+        const category = product.kategori || 'UMUM'
+        if (!categories[category]) {
+            categories[category] = {
+                products: [],
+                total: 0
+            }
+        }
+        categories[category].products.push({...product, globalIndex: index + 1})
+        categories[category].total++
+    })
+    
+    return categories
+}
+
+const showCategoryMenu = async (m, db) => {
+    const categories = groupByCategory(db)
+    const categoryList = Object.keys(categories)
+    
+    if (categoryList.length === 0) {
+        return m.reply(`${createHeader('KATEGORI')}
+${DESIGN.colors.warning} *Tidak ada kategori tersedia*
+
+${DESIGN.colors.info} Hubungi admin untuk menambahkan produk.`)
+    }
+    
+    let menuText = `${createHeader('PILIH KATEGORI', `Total: ${categoryList.length} kategori`)}
+
+${DESIGN.icons.category} *Daftar Kategori:*\n`
+    
+    categoryList.forEach((category, index) => {
+        const count = categories[category].total
+        menuText += `\n${DESIGN.icons.category} *${index + 1}.* ${category.toUpperCase()}`
+        menuText += `\n   📊 ${count} produk tersedia`
+        menuText += `\n   ──────────────────────`
+    })
+    
+    menuText += `\n\n${DESIGN.icons.search} *PERINTAH:*
+• \`.store [nomor_kategori]\` - Lihat produk dalam kategori
+• \`.store all\` - Lihat semua produk
+• \`.store [nama_produk]\` - Cari produk
+• \`.store [kode_produk]\` - Detail produk
+
+${DESIGN.icons.cart} *Contoh:* \`.store 1\` untuk lihat kategori pertama`
+    
+    return m.reply(menuText)
+}
+
+const showProductsByCategory = async (m, db, categoryIndex, page = 1) => {
+    const categories = groupByCategory(db)
+    const categoryList = Object.keys(categories)
+    
+    if (categoryIndex < 1 || categoryIndex > categoryList.length) {
+        return m.reply(`${DESIGN.colors.error} *Kategori tidak ditemukan*
+        
+${DESIGN.icons.home} Ketik \`.store\` untuk melihat daftar kategori`)
+    }
+    
+    const selectedCategory = categoryList[categoryIndex - 1]
+    const categoryData = categories[selectedCategory]
+    const products = categoryData.products
+    
+    // Pagination
+    const itemsPerPage = 5
+    const totalPages = Math.ceil(products.length / itemsPerPage)
+    const startIndex = (page - 1) * itemsPerPage
+    const endIndex = Math.min(startIndex + itemsPerPage, products.length)
+    const pageProducts = products.slice(startIndex, endIndex)
+    
+    let categoryText = `${createHeader(`KATEGORI: ${selectedCategory}`, `Halaman ${page}/${totalPages}`)}
+
+${DESIGN.icons.product} *Produk (${products.length} item):*\n`
+    
+    pageProducts.forEach((product, index) => {
+        categoryText += `\n${createProductCard(product, index, false, product.globalIndex)}`
+        categoryText += `\n   ──────────────────────`
+    })
+    
+    // Pagination navigation
+    categoryText += `\n\n${DESIGN.icons.page} *Navigasi Halaman:*`
+    if (page > 1) {
+        categoryText += `\n${DESIGN.icons.prev} \`.store ${categoryIndex} page ${page - 1}\` - Sebelumnya`
+    }
+    if (page < totalPages) {
+        categoryText += `\n${DESIGN.icons.next} \`.store ${categoryIndex} page ${page + 1}\` - Selanjutnya`
+    }
+    
+    categoryText += `\n\n${DESIGN.icons.search} *PERINTAH:*
+• \`.store\` - Kembali ke menu kategori
+• \`.store [nomor_produk]\` - Detail produk
+• \`.beli [nomor_produk]\` - Beli produk
+• \`.store all\` - Semua produk`
+
+    // Save user state for navigation
+    const userId = m.sender
+    userStates.set(userId, {
+        view: 'category',
+        category: selectedCategory,
+        page: page,
+        categoryIndex: categoryIndex
+    })
+    
+    return m.reply(categoryText)
+}
+
+const showAllProducts = async (m, db, page = 1) => {
+    // Pagination
+    const itemsPerPage = 8
+    const totalPages = Math.ceil(db.length / itemsPerPage)
+    const startIndex = (page - 1) * itemsPerPage
+    const endIndex = Math.min(startIndex + itemsPerPage, db.length)
+    const pageProducts = db.slice(startIndex, endIndex)
+    
+    let allText = `${createHeader('SEMUA PRODUK', `Halaman ${page}/${totalPages}`)}
+
+${DESIGN.icons.list} *Total: ${db.length} produk*\n`
+    
+    pageProducts.forEach((product, index) => {
+        const globalIndex = startIndex + index + 1
+        allText += `\n${createProductCard(product, index, false, globalIndex)}`
+        allText += `\n   ──────────────────────`
+    })
+    
+    // Pagination navigation
+    allText += `\n\n${DESIGN.icons.page} *Navigasi Halaman:*`
+    if (page > 1) {
+        allText += `\n${DESIGN.icons.prev} \`.store all page ${page - 1}\` - Sebelumnya`
+    }
+    if (page < totalPages) {
+        allText += `\n${DESIGN.icons.next} \`.store all page ${page + 1}\` - Selanjutnya`
+    }
+    
+    allText += `\n\n${DESIGN.icons.search} *PERINTAH:*
+• \`.store\` - Menu kategori
+• \`.store [nomor]\` - Detail produk
+• \`.beli [nomor]\` - Beli produk
+• \`.store [nama]\` - Cari produk`
+
+    // Save user state
+    const userId = m.sender
+    userStates.set(userId, {
+        view: 'all',
+        page: page
+    })
+    
+    return m.reply(allText)
 }
 
 // --- MAIN HANDLER ---
@@ -207,7 +324,8 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
     
     let args = text.trim().split(/ +/)
     let subCommand = args[0] ? args[0].toLowerCase() : ''
-
+    let pageArg = args[2] === 'page' && parseInt(args[3]) ? parseInt(args[3]) : 1
+    
     // ==========================================
     // OWNER COMMANDS (CRUD)
     // ==========================================
@@ -220,7 +338,7 @@ ${DESIGN.icons.add} *Format:*
 \`${usedPrefix}store add nama|kategori|harga|stok|kode\`
 
 ${DESIGN.colors.info} *Contoh:*
-\`${usedPrefix}store add Spotify Premium 30 Hari|SOFTWARE|10000|999|SPOT001\`
+\`${usedPrefix}store add Spotify Premium|SOFTWARE|10000|999|SPOT001\`
 
 ${DESIGN.icons.owner} *Kolom yang diperlukan:*
 • Nama Produk
@@ -278,15 +396,21 @@ ${DESIGN.icons.database} Data berhasil disimpan ke database`
     if (subCommand === 'list' && isOwner) {
         if (db.length === 0) return m.reply(`${DESIGN.colors.warning} Database kosong`)
         
-        let listText = `${createHeader('DAFTAR PRODUK', `Total: ${db.length} item`)}
+        const categories = groupByCategory(db)
+        let listText = `${createHeader('DAFTAR PRODUK', 'Owner View')}
 
-${DESIGN.icons.list} *Semua Produk:*\n`
+${DESIGN.icons.database} *Total: ${db.length} produk*\n`
         
-        db.forEach((item, i) => {
-            listText += `\n${i + 1}. ${item.nama_barang}`
-            listText += `\n   ${DESIGN.icons.category} ${item.kategori} | ${DESIGN.icons.price} ${formatIDR(item.harga_jual)}`
-            listText += `\n   ${DESIGN.icons.stock} ${item.stok} ${item.satuan} | ${DESIGN.icons.code} ${item.kode_barang}`
-            listText += `\n   ──────────────────────`
+        Object.keys(categories).forEach(category => {
+            listText += `\n${DESIGN.icons.category} *${category.toUpperCase()}* (${categories[category].total} produk)`
+            listText += `\n${'─'.repeat(30)}`
+            
+            categories[category].products.forEach((product, index) => {
+                listText += `\n${index + 1}. ${product.nama_barang}`
+                listText += `\n   🏷️ ${product.kode_barang} | 💰 ${formatIDR(product.harga_jual)}`
+                listText += `\n   📊 ${product.stok} | 🔢 Global: ${product.globalIndex}`
+            })
+            listText += `\n\n`
         })
         
         return m.reply(listText)
@@ -296,21 +420,39 @@ ${DESIGN.icons.list} *Semua Produk:*\n`
     // USER COMMANDS (PURCHASE)
     // ==========================================
     if (command === 'beli') {
-        let index = parseInt(args[0]) - 1
-        let item = db[index]
+        let input = args[0]
+        let item
         
-        if (!item) {
-            const notFound = `${DESIGN.colors.error} *Produk Tidak Ditemukan*
+        // Check if input is a number (product index)
+        if (!isNaN(input)) {
+            let index = parseInt(input) - 1
+            item = db[index]
+            
+            if (!item) {
+                const notFound = `${DESIGN.colors.error} *Produk Tidak Ditemukan*
 
-${DESIGN.icons.search} Pilih produk: \`.beli [nomor]\`
-${DESIGN.icons.home} Lihat katalog: \`.store\`
+${DESIGN.icons.search} Gunakan: \`.beli [nomor_produk]\`
+${DESIGN.icons.home} Lihat produk: \`.store\`
 
 ${DESIGN.colors.info} Contoh: \`.beli 1\``
-            return m.reply(notFound)
+                return m.reply(notFound)
+            }
+        } else {
+            // Search by product code or name
+            item = db.find(v => 
+                v.kode_barang.toLowerCase() === input.toLowerCase() ||
+                v.nama_barang.toLowerCase().includes(input.toLowerCase())
+            )
+            
+            if (!item) {
+                return m.reply(`${DESIGN.colors.error} *Produk tidak ditemukan*
+                
+${DESIGN.icons.search} Coba cari dengan kode produk atau gunakan nomor produk dari \`.store\``)
+            }
         }
 
         if (item.stok <= 0) {
-            return m.reply(`${DESIGN.colors.error} *STOK HABIS*\n\nMaaf, stok "${item.nama_barang}" sedang kosong.`)
+            return m.reply(`${DESIGN.colors.error} *STOK HABIS*\n\n"${item.nama_barang}" sedang tidak tersedia.`)
         }
         
         let cost = getFinalPrice(item.harga_jual)
@@ -320,8 +462,20 @@ ${DESIGN.colors.info} Contoh: \`.beli 1\``
         try {
             const res = await createQris(cost.total, item.nama_barang)
             
-            const paymentBox = createPaymentBox(item, cost)
-            const caption = `${paymentBox}\n\n${DESIGN.icons.qris} *Scan QR Code di atas untuk pembayaran*\n${DESIGN.icons.time} QR akan kadaluarsa dalam ${SETTINGS.expired} menit`
+            const paymentBox = `╔══════════════════════════════╗
+║     ${DESIGN.icons.payment} *PEMBAYARAN*     ║
+╠══════════════════════════════╣
+║ ${DESIGN.icons.product} ${item.nama_barang}
+║ ${DESIGN.icons.code} ${item.kode_barang}
+╠══════════════════════════════╣
+║ ${DESIGN.icons.price} Harga: ${formatIDR(cost.base)}
+║ ${DESIGN.icons.admin} Admin: ${formatIDR(cost.tax)}
+╠══════════════════════════════╣
+║ ${DESIGN.colors.money} *TOTAL: ${formatIDR(cost.total)}*
+║ ${DESIGN.icons.time} Berlaku: ${SETTINGS.expired} menit
+╚══════════════════════════════╝`
+            
+            const caption = `${paymentBox}\n\n${DESIGN.icons.qris} *Scan QR Code di atas untuk pembayaran*`
 
             let msg = await conn.sendMessage(m.chat, { 
                 image: { url: `https://quickchart.io/qr?text=${encodeURIComponent(res.payment_number)}&size=300&margin=2` },
@@ -373,77 +527,80 @@ ${DESIGN.colors.info} Silakan hubungi admin untuk pengiriman produk.`
     }
 
     // ==========================================
-    // SEARCH & DETAIL
+    // NAVIGATION & SEARCH
     // ==========================================
+    
+    // Handle "store all" with pagination
+    if (subCommand === 'all') {
+        return await showAllProducts(m, db, pageArg)
+    }
+    
+    // Handle category navigation with pagination
+    if (!isNaN(subCommand) && subCommand !== '') {
+        const categoryIndex = parseInt(subCommand)
+        return await showProductsByCategory(m, db, categoryIndex, pageArg)
+    }
+    
+    // Handle search for product by name or code
     if (subCommand && subCommand !== 'add' && subCommand !== 'del' && subCommand !== 'list') {
-        let item
-        if (!isNaN(subCommand)) {
-            item = db[parseInt(subCommand) - 1]
-        } else {
-            item = db.find(v => 
-                v.nama_barang.toLowerCase().includes(subCommand) ||
-                v.kode_barang.toLowerCase().includes(subCommand)
-            )
+        // Search by product name or code
+        const searchTerm = text.toLowerCase()
+        const foundProducts = db.filter(v => 
+            v.nama_barang.toLowerCase().includes(searchTerm) ||
+            v.kode_barang.toLowerCase().includes(searchTerm)
+        )
+        
+        if (foundProducts.length === 0) {
+            return m.reply(`${DESIGN.colors.error} *Produk tidak ditemukan*
+            
+${DESIGN.icons.search} Coba cari dengan kata kunci lain atau gunakan:
+• \`.store\` - Lihat kategori
+• \`.store all\` - Lihat semua produk`)
         }
-
-        if (item) {
-            const detailText = `${createProductCard(item, db.indexOf(item), true)}`
+        
+        if (foundProducts.length === 1) {
+            // Show single product detail
+            const item = foundProducts[0]
+            const globalIndex = db.findIndex(p => p.id === item.id) + 1
+            const detailText = createProductCard(item, 0, true, globalIndex)
             return m.reply(detailText)
         }
-    }
+        
+        // Show multiple search results
+        let searchText = `${createHeader('HASIL PENCARIAN', `Ditemukan: ${foundProducts.length} produk`)}
 
+${DESIGN.icons.search} *Hasil untuk "${text}":*\n`
+        
+        foundProducts.forEach((item, index) => {
+            const globalIndex = db.findIndex(p => p.id === item.id) + 1
+            searchText += `\n${createProductCard(item, index, false, globalIndex)}`
+            searchText += `\n   ──────────────────────`
+        })
+        
+        searchText += `\n\n${DESIGN.icons.search} *PERINTAH:*
+• \`.store [nomor]\` - Detail produk (gunakan nomor global)
+• \`.beli [nomor]\` - Beli produk
+• \`.store\` - Kembali ke menu kategori`
+        
+        return m.reply(searchText)
+    }
+    
     // ==========================================
-    // MAIN CATALOG
+    // MAIN CATALOG (CATEGORY MENU)
     // ==========================================
     if (db.length === 0) {
-        const emptyStore = `${createHeader('ACAMEDIA STORE', 'Coming Soon')}
+        const emptyStore = `${createHeader('TOKO KOSONG')}
 
-${DESIGN.colors.warning} *TOKO SEDANG KOSONG*
+${DESIGN.colors.warning} *Belum ada produk yang tersedia*
 
-${DESIGN.colors.info} Belum ada produk yang tersedia.
-Silakan hubungi admin untuk info lebih lanjut.
+${DESIGN.colors.info} Hubungi admin untuk informasi lebih lanjut.
 
-${DESIGN.icons.owner} *Kontak Admin:* 
-• Owner Bot`
+${DESIGN.icons.owner} *Kontak Admin:* Owner`
         return m.reply(emptyStore)
     }
     
-    // Group by category
-    let sections = {}
-    db.forEach((item, i) => {
-        const kategori = item.kategori || 'UMUM'
-        if (!sections[kategori]) sections[kategori] = []
-        sections[kategori].push(createProductCard(item, i, false))
-    })
-
-    let catalogText = `${createHeader('ACAMEDIA STORE', 'Digital Products')}
-
-${DESIGN.icons.store} *Katalog Produk*\n`
-
-    Object.keys(sections).forEach(category => {
-        catalogText += `\n${DESIGN.icons.category} *${category.toUpperCase()}*\n`
-        catalogText += `${DESIGN.borders.middleLeft}${DESIGN.borders.horizontal.repeat(30)}${DESIGN.borders.middleRight}\n`
-        catalogText += sections[category].join('\n')
-        catalogText += '\n\n'
-    })
-
-    catalogText += `${DESIGN.borders.bottomLeft}${DESIGN.borders.horizontal.repeat(32)}${DESIGN.borders.bottomRight}\n`
-    catalogText += `📊 Total: ${db.length} produk tersedia\n\n`
-    
-    catalogText += `${DESIGN.icons.search} *CARA MENGGUNAKAN:*\n`
-    catalogText += `• \`.store [nomor]\` - Lihat detail produk\n`
-    catalogText += `• \`.store [nama]\` - Cari produk\n`
-    catalogText += `• \`.beli [nomor]\` - Beli produk\n`
-    catalogText += `• \`.store\` - Tampilkan katalog ini\n`
-
-    if (isOwner) {
-        catalogText += `\n${DESIGN.icons.owner} *MENU ADMIN:*\n`
-        catalogText += `• \`.store add\` - Tambah produk\n`
-        catalogText += `• \`.store del [nomor]\` - Hapus produk\n`
-        catalogText += `• \`.store list\` - Daftar semua produk\n`
-    }
-
-    return m.reply(catalogText)
+    // Show category menu by default
+    return await showCategoryMenu(m, db)
 }
 
 // --- API FUNCTIONS ---
