@@ -346,7 +346,6 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
                 `Stok Tersedia: ${item.stok} pcs\n\n` +
                 `Berlaku hingga: ${exp.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} (${SETTINGS.expired} menit)\n\n` +
                 'SCAN QR CODE DI ATAS\n' +
-                `atau bayar ke nomor:\n${res.payment_number}\n\n` +
                 'JANGAN TUTUP PESAN INI'
             
             const msg = await conn.sendMessage(m.chat, {
