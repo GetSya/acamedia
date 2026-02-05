@@ -162,7 +162,7 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
     if (command === 'start' || command === 'menu') {
         try {
             // Cek apakah file gambar ada
-            const imagePath = path.join(process.cwd(), 'media', 'acaku.jpg')
+            const imagePath = path.join(process.cwd(), 'media', 'acaku.png')
             
             if (fs.existsSync(imagePath)) {
                 // Kirim gambar dengan caption
@@ -319,43 +319,7 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
         
         const cost = getFinalPrice(item.harga_jual)
         
-        // Tampilkan konfirmasi pembelian
-        await m.reply(`Konfirmasi Pembelian:\n\n` +
-            `Produk: ${item.nama_barang}\n` +
-            `Kode: ${item.kode_barang}\n` +
-            `Kategori: ${item.kategori}\n` +
-            `Harga: ${formatIDR(item.harga_jual)}\n` +
-            `Biaya Admin: ${formatIDR(cost.tax + cost.fee)}\n` +
-            `─────────────────────────────\n` +
-            `TOTAL: ${formatIDR(cost.total)}\n` +
-            `Stok Tersedia: ${item.stok} pcs\n\n` +
-            `Lanjutkan pembelian? (YA/TIDAK)`)
-        
-        // Simpan konteks pembelian
-        conn.purchase = conn.purchase || {}
-        conn.purchase[m.sender] = {
-            itemIndex: index,
-            item: item,
-            cost: cost,
-            timestamp: Date.now()
-        }
-        
-        return
-    }
-
-    // LOGIKA KONFIRMASI YA/TIDAK
-    if ((text === 'YA' || text === 'ya') && conn.purchase && conn.purchase[m.sender]) {
-        const purchaseData = conn.purchase[m.sender]
-        const { itemIndex, item, cost } = purchaseData
-        
-        // Validasi timeout (5 menit)
-        if (Date.now() - purchaseData.timestamp > 300000) {
-            delete conn.purchase[m.sender]
-            return m.reply('Sesi pembelian telah kadaluarsa!')
-        }
-        
-        delete conn.purchase[m.sender]
-        
+        // LANGSUNG PROSES PEMBAYARAN TANPA KONFIRMASI
         await m.reply('Menyiapkan pembayaran...')
         
         try {
@@ -370,14 +334,16 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
                 'PEMBAYARAN QRIS\n' +
                 '══════════════════════════════════\n\n' +
                 `Produk: ${item.nama_barang}\n` +
-                `Kode: ${item.kode_barang}\n\n` +
+                `Kode: ${item.kode_barang}\n` +
+                `Kategori: ${item.kategori}\n\n` +
                 'Rincian Biaya:\n' +
                 '─────────────────────────────\n' +
-                `Subtotal    : ${formatIDR(cost.base)}\n` +
-                `Biaya Admin : ${formatIDR(cost.tax + cost.fee)}\n` +
+                `Harga Produk : ${formatIDR(cost.base)}\n` +
+                `Biaya Admin  : ${formatIDR(cost.tax + cost.fee)}\n` +
                 '─────────────────────────────\n' +
-                `TOTAL BAYAR : ${formatIDR(cost.total)}\n` +
+                `TOTAL BAYAR  : ${formatIDR(cost.total)}\n` +
                 '─────────────────────────────\n\n' +
+                `Stok Tersedia: ${item.stok} pcs\n\n` +
                 `Berlaku hingga: ${exp.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} (${SETTINGS.expired} menit)\n\n` +
                 'SCAN QR CODE DI ATAS\n' +
                 `atau bayar ke nomor:\n${res.payment_number}\n\n` +
@@ -440,11 +406,6 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
             console.error('Payment error:', e)
             return m.reply('Gagal membuat pembayaran!\n\nCoba beberapa saat lagi atau hubungi admin.')
         }
-    }
-    
-    if ((text === 'TIDAK' || text === 'tidak') && conn.purchase && conn.purchase[m.sender]) {
-        delete conn.purchase[m.sender]
-        return m.reply('Pembelian dibatalkan.\n\nLihat produk lain: .store')
     }
 
     // LOGIKA PENCARIAN PRODUK
