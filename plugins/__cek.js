@@ -1,5 +1,7 @@
 import axios from 'axios'
 import { createClient } from '@supabase/supabase-js'
+import fs from 'fs'
+import path from 'path'
 
 // --- SUPABASE CONFIG ---
 const SUPABASE_URL = 'https://xteposmfavnnevgqivub.supabase.co'
@@ -17,74 +19,47 @@ const SETTINGS = {
     feeFixed: 310
 }
 
-// Emoji set untuk visual yang lebih baik
-const EMOJI = {
-    STORE: '🏪',
-    PRODUCT: '📦',
-    PRICE: '💰',
-    STOCK: '📊',
-    CATEGORY: '📁',
-    CODE: '🏷️',
-    ADMIN: '🧾',
-    TIME: '⏰',
-    SUCCESS: '✅',
-    ERROR: '❌',
-    WARNING: '⚠️',
-    SEARCH: '🔍',
-    TRASH: '🗑️',
-    ADD: '➕',
-    LIST: '📋',
-    PAYMENT: '💳',
-    QR: '📱',
-    LOADING: '🔄',
-    SAVE: '💾',
-    USER: '👤',
-    OWNER: '👑',
-    BACK: '⬅️',
-    NEXT: '➡️'
-}
-
 // --- SUPABASE LOGIC ---
 const loadDB = async () => {
     try {
-        console.log(`${EMOJI.LOADING} Mengambil data dari Supabase...`)
+        console.log('Mengambil data dari Supabase...')
         
         const { data, error } = await supabase
             .from('master_data')
             .select('*')
             .eq('user_id', USER_ID)
         
-        console.log(`${EMOJI.PRODUCT} Hasil query: ${data?.length || 0} baris`)
+        console.log('Hasil query:', data?.length || 0, 'baris')
         
         if (error) {
-            console.error(`${EMOJI.ERROR} Error loading:`, error)
+            console.error('Error loading:', error)
             return []
         }
         
         if (!data || data.length === 0) {
-            console.log(`${EMOJI.WARNING} Tidak ada data untuk user_id: ${USER_ID}`)
+            console.log('Tidak ada data untuk user_id:', USER_ID)
             return []
         }
         
         const daftarItem = data[0].daftar_item
         
         if (!daftarItem) {
-            console.log(`${EMOJI.WARNING} daftar_item kosong`)
+            console.log('daftar_item kosong')
             return []
         }
         
-        console.log(`${EMOJI.SUCCESS} Data loaded: ${daftarItem.length} items`)
+        console.log('Data loaded:', daftarItem.length, 'items')
         return daftarItem
         
     } catch (error) {
-        console.error(`${EMOJI.ERROR} Error in loadDB:`, error)
+        console.error('Error in loadDB:', error)
         return []
     }
 }
 
 const saveDB = async (data) => {
     try {
-        console.log(`${EMOJI.SAVE} Menyimpan data...`)
+        console.log('Menyimpan data...')
         
         const { error } = await supabase
             .from('master_data')
@@ -95,22 +70,22 @@ const saveDB = async (data) => {
             .eq('user_id', USER_ID)
         
         if (error) {
-            console.error(`${EMOJI.ERROR} Error saving:`, error)
+            console.error('Error saving:', error)
             return false
         }
         
-        console.log(`${EMOJI.SUCCESS} Data saved: ${data.length} items`)
+        console.log('Data saved:', data.length, 'items')
         return true
     } catch (error) {
-        console.error(`${EMOJI.ERROR} Error in saveDB:`, error)
+        console.error('Error in saveDB:', error)
         return false
     }
 }
 
-// Format currency dengan emoji
-const formatIDR = (num) => `${EMOJI.PRICE} Rp ${num.toLocaleString('id-ID')}`
+// Format currency sederhana
+const formatIDR = (num) => `Rp ${num.toLocaleString('id-ID')}`
 
-// Generate final price dengan breakdown yang jelas
+// Generate final price
 const getFinalPrice = (price) => {
     const tax = Math.ceil(price * SETTINGS.feePercent)
     const fee = SETTINGS.feeFixed
@@ -120,122 +95,141 @@ const getFinalPrice = (price) => {
         base: price,
         tax: tax,
         fee: fee,
-        total: Math.ceil(total),
-        breakdown: {
-            subtotal: price,
-            taxPercent: (SETTINGS.feePercent * 100).toFixed(1),
-            fixedFee: fee,
-            total: Math.ceil(total)
-        }
+        total: Math.ceil(total)
     }
 }
 
-// Fungsi untuk membuat box/border yang menarik
-const createBox = (title, content, type = 'normal') => {
-    const borders = {
-        normal: { tl: '┏', tr: '┓', bl: '┗', br: '┛', h: '━', v: '┃' },
-        round: { tl: '╭', tr: '╮', bl: '╰', br: '╯', h: '─', v: '│' },
-        thick: { tl: '┌', tr: '┐', bl: '└', br: '┘', h: '─', v: '│' }
-    }
-    
-    const border = borders[type]
-    const width = 34
-    const titleLine = ` ${title} `
-    const padding = Math.max(0, width - titleLine.length)
-    
-    let box = `${border.tl}${border.h.repeat(width)}${border.tr}\n`
-    box += `${border.v}${titleLine}${' '.repeat(padding)}${border.v}\n`
-    box += `${border.v}${' '.repeat(width)}${border.v}\n`
-    
-    content.split('\n').forEach(line => {
-        const lineContent = line.substring(0, width)
-        const linePadding = ' '.repeat(Math.max(0, width - lineContent.length))
-        box += `${border.v}${lineContent}${linePadding}${border.v}\n`
-    })
-    
-    box += `${border.bl}${border.h.repeat(width)}${border.br}`
-    
-    return box
+// Fungsi untuk membuat QR code URL dengan api.qrserver.com
+const generateQRCodeUrl = (paymentNumber) => {
+    const encodedData = encodeURIComponent(paymentNumber)
+    return `https://api.qrserver.com/v1/create-qr-code/?data=${encodedData}&size=300x300&ecc=H&color=000000&bgcolor=ffffff&margin=10&qzone=4`
 }
 
-// Fungsi untuk membuat progress bar (stok indicator)
-const createStockBar = (stock, maxStock = 100) => {
-    const percentage = Math.min(100, Math.max(0, (stock / maxStock) * 100))
-    const bars = 10
-    const filled = Math.round((percentage / 100) * bars)
-    const empty = bars - filled
+// Fungsi untuk membuat daftar produk ringkas
+const createCompactProductList = (items) => {
+    let productList = ''
     
-    let bar = '['
-    bar += '▓'.repeat(filled)
-    bar += '░'.repeat(empty)
-    bar += ']'
-    
-    let status = ''
-    if (percentage >= 70) status = '🟢 Tersedia'
-    else if (percentage >= 30) status = '🟡 Terbatas'
-    else if (percentage > 0) status = '🔴 Hampir Habis'
-    else status = '⚫ Habis'
-    
-    return `${bar} ${status} (${stock} pcs)`
-}
-
-// Fungsi untuk membuat tabel responsif
-const createProductTable = (items, startIndex = 0, itemsPerPage = 8) => {
-    const endIndex = Math.min(startIndex + itemsPerPage, items.length)
-    const currentItems = items.slice(startIndex, endIndex)
-    
-    let table = ''
-    currentItems.forEach((item, i) => {
-        const globalIndex = startIndex + i
-        const cost = getFinalPrice(item.harga_jual)
-        const stockBar = createStockBar(item.stok)
+    // Kelompokkan berdasarkan kategori
+    const categories = {}
+    items.forEach((item, index) => {
+        const category = item.kategori || 'LAINNYA'
+        if (!categories[category]) categories[category] = []
         
-        table += `┣ ${globalIndex + 1}. ${item.nama_barang}\n`
-        table += `┃   ${EMOJI.PRICE} ${formatIDR(cost.total)}\n`
-        table += `┃   ${EMOJI.STOCK} ${stockBar}\n`
-        table += `┃   ${EMOJI.CATEGORY} ${item.kategori}\n`
-        if (i < currentItems.length - 1) table += '┃\n'
+        const cost = getFinalPrice(item.harga_jual)
+        const productLine = `${index + 1}. ${item.nama_barang}`
+        const priceLine = `   ${formatIDR(cost.total)} | Stok: ${item.stok}`
+        
+        categories[category].push(`${productLine}\n${priceLine}`)
     })
     
-    return {
-        table,
-        hasNext: endIndex < items.length,
-        hasPrev: startIndex > 0,
-        currentPage: Math.floor(startIndex / itemsPerPage) + 1,
-        totalPages: Math.ceil(items.length / itemsPerPage)
-    }
+    // Tampilkan semua kategori dan produk
+    Object.keys(categories).forEach(category => {
+        productList += `\n【 ${category.toUpperCase()} 】\n`
+        productList += '─'.repeat(35) + '\n'
+        productList += categories[category].join('\n\n')
+        productList += '\n\n'
+    })
+    
+    return productList
+}
+
+// Fungsi untuk detail produk
+const showProductDetail = (item, index, db) => {
+    const cost = getFinalPrice(item.harga_jual)
+    
+    let detail = '══════════════════════════════════\n'
+    detail += `PRODUK DETAIL\n`
+    detail += '══════════════════════════════════\n\n'
+    detail += `Nama    : ${item.nama_barang}\n`
+    detail += `Kode    : ${item.kode_barang}\n`
+    detail += `Kategori: ${item.kategori}\n`
+    detail += `Stok    : ${item.stok} pcs\n\n`
+    detail += '━ Rincian Harga ━\n'
+    detail += `Harga Dasar : ${formatIDR(item.harga_jual)}\n`
+    detail += `Biaya Admin : ${formatIDR(cost.tax + cost.fee)}\n`
+    detail += `Total Bayar : ${formatIDR(cost.total)}\n\n`
+    detail += '━ Perintah ━\n'
+    detail += `Beli produk ini: .beli ${index + 1}\n`
+    detail += `Kembali: .store`
+    
+    return detail
 }
 
 let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
+    // ==========================================
+    // PERINTAH START/MENU - TAMPILKAN GAMBAR
+    // ==========================================
+    if (command === 'start' || command === 'menu') {
+        try {
+            // Cek apakah file gambar ada
+            const imagePath = path.join(process.cwd(), 'media', 'acaku.jpg')
+            
+            if (fs.existsSync(imagePath)) {
+                // Kirim gambar dengan caption
+                const caption = 
+                    '╔══════════════════════════════════╗\n' +
+                    '║    SELAMAT DATANG DI ACAMEDIA    ║\n' +
+                    '╚══════════════════════════════════╝\n\n' +
+                    '📱 *Toko Digital Terpercaya*\n\n' +
+                    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
+                    '🔹 *Perintah Utama:*\n' +
+                    '• .store - Lihat semua produk\n' +
+                    '• .beli [nomor] - Beli produk\n' +
+                    '• .store [nomor] - Detail produk\n' +
+                    '• .store [nama] - Cari produk\n\n' +
+                    '🔹 *Pembayaran:*\n' +
+                    '• QRIS (Instant)\n' +
+                    '• Otomatis 24/7\n' +
+                    `• Waktu: ${SETTINGS.expired} menit\n\n` +
+                    '🔹 *Hubungi Admin:*\n' +
+                    'Jika ada kendala atau pertanyaan\n\n' +
+                    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
+                    '🚀 *Mulai Belanja:* .store'
+                
+                await conn.sendMessage(m.chat, {
+                    image: { url: imagePath },
+                    caption: caption
+                }, { quoted: m })
+            } else {
+                // Jika gambar tidak ditemukan, kirim teks saja
+                m.reply(
+                    '╔══════════════════════════════════╗\n' +
+                    '║    SELAMAT DATANG DI ACAMEDIA    ║\n' +
+                    '╚══════════════════════════════════╝\n\n' +
+                    'Mulai belanja: .store'
+                )
+            }
+        } catch (error) {
+            console.error('Error loading image:', error)
+            m.reply(
+                '╔══════════════════════════════════╗\n' +
+                '║    SELAMAT DATANG DI ACAMEDIA    ║\n' +
+                '╚══════════════════════════════════╝\n\n' +
+                'Mulai belanja: .store'
+            )
+        }
+        return
+    }
+    
+    // ==========================================
+    // LOGIKA TOKO DAN PEMBELIAN
+    // ==========================================
     const db = await loadDB()
     
-    // Log database status
-    console.log(`${EMOJI.PRODUCT} Database: ${db.length} items`)
+    console.log('Database:', db.length, 'items')
     
     const args = text.trim().split(/ +/)
     const subCommand = args[0] ? args[0].toLowerCase() : ''
-    const pageNumber = parseInt(args[1]) || 1
 
-    // ==========================================
     // LOGIKA OWNER (CRUD)
-    // ==========================================
     if (subCommand === 'add' && isOwner) {
         if (!args[1]) {
-            const helpText = createBox('TAMBAH PRODUK', 
-                `Format: ${usedPrefix}store add nama|kategori|harga|stok|kode\n\n` +
-                `Contoh: ${usedPrefix}store add Spotify Premium|Software|15000|50|SPOT001\n\n` +
-                `${EMOJI.PRODUCT} Nama: Nama produk\n` +
-                `${EMOJI.CATEGORY} Kategori: Software/Game/Pulsa\n` +
-                `${EMOJI.PRICE} Harga: Angka saja (tanpa titik)\n` +
-                `${EMOJI.STOCK} Stok: Jumlah stok\n` +
-                `${EMOJI.CODE} Kode: Kode unik produk`, 'round')
-            
-            return m.reply(helpText)
+            return m.reply(`Format tambah produk:\n${usedPrefix}store add nama|kategori|harga|stok|kode\n\nContoh:\n${usedPrefix}store add Spotify Premium|Software|15000|50|SPOT001`)
         }
         
         const input = text.slice(4).split('|').map(v => v.trim())
         if (input.length < 5) {
-            return m.reply(`${EMOJI.ERROR} Format tidak lengkap! Gunakan format:\n${usedPrefix}store add nama|kategori|harga|stok|kode`)
+            return m.reply(`Format tidak lengkap! Gunakan:\n${usedPrefix}store add nama|kategori|harga|stok|kode`)
         }
         
         const [nama_barang, kategori, harga_jual, stok, kode_barang] = input
@@ -258,17 +252,9 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
         const success = await saveDB(db)
         
         if (success) {
-            const successBox = createBox('PRODUK DITAMBAHKAN', 
-                `${EMOJI.PRODUCT} Nama: ${newItem.nama_barang}\n` +
-                `${EMOJI.CATEGORY} Kategori: ${newItem.kategori}\n` +
-                `${EMOJI.PRICE} Harga: ${formatIDR(newItem.harga_jual)}\n` +
-                `${EMOJI.STOCK} Stok: ${newItem.stok}\n` +
-                `${EMOJI.CODE} Kode: ${newItem.kode_barang}\n` +
-                `${EMOJI.SUCCESS} Status: Berhasil disimpan!`, 'round')
-            
-            return m.reply(successBox)
+            return m.reply(`Produk berhasil ditambahkan!\n\nNama: ${newItem.nama_barang}\nKategori: ${newItem.kategori}\nHarga: ${formatIDR(newItem.harga_jual)}\nStok: ${newItem.stok}\nKode: ${newItem.kode_barang}`)
         } else {
-            return m.reply(`${EMOJI.ERROR} Gagal menyimpan produk!`)
+            return m.reply('Gagal menyimpan produk!')
         }
     }
 
@@ -276,7 +262,7 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
         const index = parseInt(args[1]) - 1
         
         if (isNaN(index) || index < 0 || index >= db.length) {
-            return m.reply(`${EMOJI.ERROR} Nomor tidak valid! Gunakan ${usedPrefix}store list untuk melihat daftar produk.`)
+            return m.reply(`Nomor tidak valid! Gunakan ${usedPrefix}store list untuk melihat daftar produk.`)
         }
         
         const removed = db[index]
@@ -284,97 +270,68 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
         const success = await saveDB(db)
         
         if (success) {
-            const deleteBox = createBox('PRODUK DIHAPUS',
-                `${EMOJI.PRODUCT} ${removed.nama_barang}\n` +
-                `${EMOJI.TRASH} Status: Berhasil dihapus!\n` +
-                `📍 Sisa produk: ${db.length} items`, 'round')
-            
-            return m.reply(deleteBox)
+            return m.reply(`Produk "${removed.nama_barang}" berhasil dihapus.\nSisa produk: ${db.length} items`)
         } else {
-            return m.reply(`${EMOJI.ERROR} Gagal menghapus produk!`)
+            return m.reply('Gagal menghapus produk!')
         }
     }
 
     if (subCommand === 'list' && isOwner) {
         if (db.length === 0) {
-            return m.reply(`${EMOJI.WARNING} Database kosong! Tambah produk dengan ${usedPrefix}store add`)
+            return m.reply('Database kosong!')
         }
         
-        const itemsPerPage = 5
-        const currentPage = pageNumber
-        const startIndex = (currentPage - 1) * itemsPerPage
-        const endIndex = Math.min(startIndex + itemsPerPage, db.length)
+        let listText = 'DAFTAR PRODUK\n'
+        listText += '══════════════════════════════════\n\n'
         
-        let listText = createBox(`DAFTAR PRODUK (${db.length} ITEMS)`, 
-            `Halaman ${currentPage}/${Math.ceil(db.length / itemsPerPage)}\n` +
-            `📊 Total Produk: ${db.length}\n` +
-            `📈 Total Nilai: ${formatIDR(db.reduce((a, b) => a + (b.harga_jual * b.stok), 0))}\n`, 'normal')
-        
-        listText += '\n\n'
-        
-        db.slice(startIndex, endIndex).forEach((item, i) => {
-            const globalIndex = startIndex + i + 1
+        db.forEach((item, i) => {
             const cost = getFinalPrice(item.harga_jual)
             
-            listText += `┏━━ ${globalIndex}. ${item.nama_barang}\n`
-            listText += `┃ ${EMOJI.CODE} ${item.kode_barang} | ${EMOJI.CATEGORY} ${item.kategori}\n`
-            listText += `┃ ${EMOJI.PRICE} ${formatIDR(item.harga_jual)} → ${formatIDR(cost.total)}\n`
-            listText += `┃ ${createStockBar(item.stok)}\n`
-            listText += `┗━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`
+            listText += `${i + 1}. ${item.nama_barang}\n`
+            listText += `   Kode: ${item.kode_barang} | Kategori: ${item.kategori}\n`
+            listText += `   Harga: ${formatIDR(item.harga_jual)} → ${formatIDR(cost.total)}\n`
+            listText += `   Stok: ${item.stok} pcs\n`
+            listText += `   ─────────────────────────────\n\n`
         })
         
-        if (db.length > itemsPerPage) {
-            listText += `\n📄 Navigasi:\n`
-            if (currentPage > 1) {
-                listText += `${EMOJI.BACK} ${usedPrefix}store list ${currentPage - 1}\n`
-            }
-            if (endIndex < db.length) {
-                listText += `${EMOJI.NEXT} ${usedPrefix}store list ${currentPage + 1}\n`
-            }
-        }
-        
-        listText += `\n${EMOJI.WARNING} Hapus: ${usedPrefix}store del [nomor]`
+        listText += `Total: ${db.length} produk\n`
+        listText += `Hapus: ${usedPrefix}store del [nomor]`
         
         return m.reply(listText)
     }
 
-    // ==========================================
     // LOGIKA USER (PEMBAYARAN/BELI)
-    // ==========================================
     if (command === 'beli') {
         if (!text) {
-            return m.reply(`${EMOJI.WARNING} Format: ${usedPrefix}beli [nomor]\nContoh: ${usedPrefix}beli 1\n\n${EMOJI.SEARCH} Lihat produk: ${usedPrefix}store`)
+            return m.reply(`Format: ${usedPrefix}beli [nomor]\nContoh: ${usedPrefix}beli 1\n\nLihat produk: ${usedPrefix}store`)
         }
         
         const index = parseInt(args[0]) - 1
         const item = db[index]
         
         if (!item) {
-            return m.reply(`${EMOJI.ERROR} Produk tidak ditemukan!\n\n${EMOJI.SEARCH} Cek daftar produk:\n${usedPrefix}store`)
+            return m.reply(`Produk tidak ditemukan!\n\nCek daftar produk:\n${usedPrefix}store`)
         }
         
         if (item.stok <= 0) {
-            return m.reply(`${EMOJI.ERROR} Stok habis!\n\n${EMOJI.PRODUCT} ${item.nama_barang}\n${EMOJI.WARNING} Stok: 0 pcs\n\nCek produk lain: ${usedPrefix}store`)
+            return m.reply(`Stok habis!\n\n${item.nama_barang}\nStok: 0 pcs\n\nCek produk lain: ${usedPrefix}store`)
         }
         
         const cost = getFinalPrice(item.harga_jual)
         
         // Tampilkan konfirmasi pembelian
-        const confirmBox = createBox('KONFIRMASI PEMBELIAN',
-            `${EMOJI.PRODUCT} ${item.nama_barang}\n` +
-            `${EMOJI.CODE} ${item.kode_barang}\n` +
-            `${EMOJI.CATEGORY} ${item.kategori}\n\n` +
-            `${EMOJI.PRICE} Harga: ${formatIDR(item.harga_jual)}\n` +
-            `${EMOJI.ADMIN} Biaya Admin: ${formatIDR(cost.tax + cost.fee)}\n` +
-            `┏━━━━━━━━━━━━━━━━━━━━━━━┓\n` +
-            `┃ ${EMOJI.PAYMENT} TOTAL: ${formatIDR(cost.total)} ┃\n` +
-            `┗━━━━━━━━━━━━━━━━━━━━━━━┛\n\n` +
-            `${createStockBar(item.stok)}\n\n` +
-            `${EMOJI.WARNING} Lanjutkan pembelian? (YA/TIDAK)`, 'thick')
+        await m.reply(`Konfirmasi Pembelian:\n\n` +
+            `Produk: ${item.nama_barang}\n` +
+            `Kode: ${item.kode_barang}\n` +
+            `Kategori: ${item.kategori}\n` +
+            `Harga: ${formatIDR(item.harga_jual)}\n` +
+            `Biaya Admin: ${formatIDR(cost.tax + cost.fee)}\n` +
+            `─────────────────────────────\n` +
+            `TOTAL: ${formatIDR(cost.total)}\n` +
+            `Stok Tersedia: ${item.stok} pcs\n\n` +
+            `Lanjutkan pembelian? (YA/TIDAK)`)
         
-        await m.reply(confirmBox)
-        
-        // Simpan konteks pembelian untuk konfirmasi
+        // Simpan konteks pembelian
         conn.purchase = conn.purchase || {}
         conn.purchase[m.sender] = {
             itemIndex: index,
@@ -386,9 +343,7 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
         return
     }
 
-    // ==========================================
     // LOGIKA KONFIRMASI YA/TIDAK
-    // ==========================================
     if ((text === 'YA' || text === 'ya') && conn.purchase && conn.purchase[m.sender]) {
         const purchaseData = conn.purchase[m.sender]
         const { itemIndex, item, cost } = purchaseData
@@ -396,39 +351,43 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
         // Validasi timeout (5 menit)
         if (Date.now() - purchaseData.timestamp > 300000) {
             delete conn.purchase[m.sender]
-            return m.reply(`${EMOJI.TIME} Sesi pembelian telah kadaluarsa!`)
+            return m.reply('Sesi pembelian telah kadaluarsa!')
         }
         
         delete conn.purchase[m.sender]
         
-        await m.reply(`${EMOJI.LOADING} *Menyiapkan pembayaran...*`)
+        await m.reply('Menyiapkan pembayaran...')
         
         try {
             const res = await createQris(cost.total, item.nama_barang)
             const exp = new Date(Date.now() + (SETTINGS.expired * 60000))
             
-            const paymentBox = createBox('PEMBAYARAN QRIS',
-                `${EMOJI.PRODUCT} ${item.nama_barang}\n` +
-                `${EMOJI.CODE} ${item.kode_barang}\n\n` +
-                `📋 Detail Biaya:\n` +
-                `┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n` +
-                `┃ Subtotal : ${formatIDR(cost.base)}\n` +
-                `┃ Admin QRIS: ${formatIDR(cost.tax + cost.fee)}\n` +
-                `┃ ───────────────────────\n` +
-                `┃ ${EMOJI.PAYMENT} TOTAL : ${formatIDR(cost.total)}\n` +
-                `┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n` +
-                `${EMOJI.TIME} Berlaku hingga:\n` +
-                `${exp.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} (${SETTINGS.expired} menit)\n\n` +
-                `${EMOJI.QR} *Scan QR Code di atas*\n` +
-                `atau bayar ke nomor:\n` +
-                `📱 ${res.payment_number}\n\n` +
-                `${EMOJI.WARNING} *JANGAN TUTUP PESAN INI*`, 'normal')
+            // Generate QR Code URL dengan api.qrserver.com
+            const qrCodeUrl = generateQRCodeUrl(res.payment_number)
+            
+            const paymentInfo = 
+                '══════════════════════════════════\n' +
+                'PEMBAYARAN QRIS\n' +
+                '══════════════════════════════════\n\n' +
+                `Produk: ${item.nama_barang}\n` +
+                `Kode: ${item.kode_barang}\n\n` +
+                'Rincian Biaya:\n' +
+                '─────────────────────────────\n' +
+                `Subtotal    : ${formatIDR(cost.base)}\n` +
+                `Biaya Admin : ${formatIDR(cost.tax + cost.fee)}\n` +
+                '─────────────────────────────\n' +
+                `TOTAL BAYAR : ${formatIDR(cost.total)}\n` +
+                '─────────────────────────────\n\n' +
+                `Berlaku hingga: ${exp.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} (${SETTINGS.expired} menit)\n\n` +
+                'SCAN QR CODE DI ATAS\n' +
+                `atau bayar ke nomor:\n${res.payment_number}\n\n` +
+                'JANGAN TUTUP PESAN INI'
             
             const msg = await conn.sendMessage(m.chat, {
                 image: { 
-                    url: `https://quickchart.io/qr?text=${encodeURIComponent(res.payment_number)}&size=300&margin=10`
+                    url: qrCodeUrl
                 },
-                caption: paymentBox
+                caption: paymentInfo
             }, { quoted: m })
             
             // Check status pembayaran
@@ -442,7 +401,7 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
                     clearInterval(checkInterval)
                     try {
                         await conn.sendMessage(m.chat, { delete: msg.key })
-                        m.reply(`${EMOJI.TIME} Waktu pembayaran habis!`)
+                        m.reply('Waktu pembayaran habis!')
                     } catch (e) {}
                     return
                 }
@@ -460,16 +419,18 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
                     item.stok = Math.max(0, item.stok - 1)
                     await saveDB(db)
                     
-                    const successBox = createBox('PEMBAYARAN BERHASIL',
-                        `${EMOJI.SUCCESS} *TRANSAKSI SUKSES!*\n\n` +
-                        `${EMOJI.PRODUCT} ${item.nama_barang}\n` +
-                        `${EMOJI.CODE} ${item.kode_barang}\n` +
-                        `${EMOJI.PAYMENT} ${formatIDR(cost.total)}\n\n` +
-                        `${EMOJI.STOCK} Stok tersisa: ${item.stok}\n` +
-                        `${EMOJI.TIME} Waktu: ${new Date().toLocaleTimeString('id-ID')}\n\n` +
-                        `${EMOJI.USER} *Hubungi admin untuk pengiriman produk*`, 'round')
+                    const successMsg = 
+                        '══════════════════════════════════\n' +
+                        'PEMBAYARAN BERHASIL\n' +
+                        '══════════════════════════════════\n\n' +
+                        `Produk: ${item.nama_barang}\n` +
+                        `Kode: ${item.kode_barang}\n` +
+                        `Total: ${formatIDR(cost.total)}\n\n` +
+                        `Stok tersisa: ${item.stok}\n` +
+                        `Waktu: ${new Date().toLocaleTimeString('id-ID')}\n\n` +
+                        'Hubungi admin untuk pengiriman produk'
                     
-                    m.reply(successBox)
+                    m.reply(successMsg)
                 }
             }, 5000)
             
@@ -477,18 +438,16 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
             
         } catch (e) {
             console.error('Payment error:', e)
-            return m.reply(`${EMOJI.ERROR} *Gagal membuat pembayaran!*\n\nCoba beberapa saat lagi atau hubungi admin.`)
+            return m.reply('Gagal membuat pembayaran!\n\nCoba beberapa saat lagi atau hubungi admin.')
         }
     }
     
     if ((text === 'TIDAK' || text === 'tidak') && conn.purchase && conn.purchase[m.sender]) {
         delete conn.purchase[m.sender]
-        return m.reply(`${EMOJI.BACK} Pembelian dibatalkan.\n\n${EMOJI.STORE} Lihat produk lain: ${usedPrefix}store`)
+        return m.reply('Pembelian dibatalkan.\n\nLihat produk lain: .store')
     }
 
-    // ==========================================
     // LOGIKA PENCARIAN PRODUK
-    // ==========================================
     if (subCommand && !['add', 'del', 'list', 'help'].includes(subCommand)) {
         // Pencarian berdasarkan nomor
         if (!isNaN(subCommand)) {
@@ -496,25 +455,7 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
             const item = db[index]
             
             if (item) {
-                const cost = getFinalPrice(item.harga_jual)
-                const detailBox = createBox('DETAIL PRODUK',
-                    `${EMOJI.PRODUCT} ${item.nama_barang}\n` +
-                    `${EMOJI.CODE} ${item.kode_barang}\n` +
-                    `${EMOJI.CATEGORY} ${item.kategori}\n\n` +
-                    `📊 Stok: ${createStockBar(item.stok)}\n` +
-                    `📦 Satuan: ${item.satuan}\n\n` +
-                    `💰 Harga Detail:\n` +
-                    `┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n` +
-                    `┃ Harga Pokok : ${formatIDR(item.harga_jual)}\n` +
-                    `┃ Admin QRIS  : ${formatIDR(cost.tax + cost.fee)}\n` +
-                    `┃ ───────────────────────\n` +
-                    `┃ Total Bayar : ${formatIDR(cost.total)}\n` +
-                    `┗━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n` +
-                    `${EMOJI.PAYMENT} *Beli produk ini:*\n` +
-                    `🛒 ${usedPrefix}beli ${index + 1}\n\n` +
-                    `${EMOJI.BACK} Kembali: ${usedPrefix}store`, 'round')
-                
-                return m.reply(detailBox)
+                return m.reply(showProductDetail(item, index, db))
             }
         } else {
             // Pencarian berdasarkan kata kunci
@@ -526,131 +467,76 @@ let handler = async (m, { conn, text, command, usedPrefix, isOwner }) => {
             )
             
             if (results.length === 0) {
-                return m.reply(`${EMOJI.SEARCH} *Pencarian: "${text}"*\n\n${EMOJI.WARNING} Tidak ditemukan!\n\nCoba cari dengan kata kunci lain atau lihat semua produk:\n${usedPrefix}store`)
+                return m.reply(`Pencarian: "${text}"\n\nTidak ditemukan!\n\nCoba cari dengan kata kunci lain atau lihat semua produk:\n${usedPrefix}store`)
             }
             
             if (results.length === 1) {
                 const item = results[0]
-                const cost = getFinalPrice(item.harga_jual)
-                const detailBox = createBox('HASIL PENCARIAN',
-                    `${EMOJI.SEARCH} Ditemukan 1 produk:\n\n` +
-                    `${EMOJI.PRODUCT} ${item.nama_barang}\n` +
-                    `${EMOJI.CODE} ${item.kode_barang}\n` +
-                    `${EMOJI.CATEGORY} ${item.kategori}\n` +
-                    `${EMOJI.PRICE} ${formatIDR(cost.total)}\n` +
-                    `${createStockBar(item.stok)}\n\n` +
-                    `${EMOJI.PAYMENT} *Beli:* ${usedPrefix}beli ${db.indexOf(item) + 1}`, 'round')
-                
-                return m.reply(detailBox)
+                const index = db.indexOf(item)
+                return m.reply(showProductDetail(item, index, db))
             }
             
-            let searchText = createBox(`HASIL PENCARIAN`,
-                `${EMOJI.SEARCH} Kata kunci: "${text}"\n` +
-                `📊 Ditemukan: ${results.length} produk\n\n`, 'normal')
+            let searchText = `Hasil Pencarian: "${text}"\n`
+            searchText += `Ditemukan: ${results.length} produk\n\n`
             
-            results.slice(0, 5).forEach((item, i) => {
+            results.slice(0, 10).forEach((item, i) => {
                 const globalIndex = db.indexOf(item) + 1
                 const cost = getFinalPrice(item.harga_jual)
                 
-                searchText += `┣ ${globalIndex}. ${item.nama_barang}\n`
-                searchText += `┃   ${EMOJI.PRICE} ${formatIDR(cost.total)} | ${EMOJI.STOCK} ${item.stok}pcs\n`
-                searchText += `┃   ${EMOJI.PAYMENT} ${usedPrefix}beli ${globalIndex}\n`
-                if (i < Math.min(5, results.length) - 1) searchText += '┃\n'
+                searchText += `${globalIndex}. ${item.nama_barang}\n`
+                searchText += `   ${formatIDR(cost.total)} | Stok: ${item.stok}\n`
+                searchText += `   Beli: .beli ${globalIndex}\n`
+                if (i < Math.min(10, results.length) - 1) searchText += '\n'
             })
             
-            if (results.length > 5) {
-                searchText += `\n${EMOJI.WARNING} Masih ada ${results.length - 5} produk lainnya.\nGunakan nomor lebih spesifik.`
+            if (results.length > 10) {
+                searchText += `\n... dan ${results.length - 10} produk lainnya.\nGunakan pencarian lebih spesifik.`
             }
             
-            searchText += `\n\n${EMOJI.BACK} Lihat semua: ${usedPrefix}store`
+            searchText += `\n\nLihat semua: ${usedPrefix}store`
             
             return m.reply(searchText)
         }
     }
 
-    // ==========================================
-    // KATALOG UTAMA (STORE DEFAULT)
-    // ==========================================
+    // KATALOG UTAMA (STORE DEFAULT) - TAMPIL SEMUA
     if (db.length === 0) {
-        const emptyStore = createBox('TOKO KOSONG',
-            `${EMOJI.STORE} *ACAMEDIA STORE*\n\n` +
-            `${EMOJI.WARNING} Belum ada produk tersedia.\n\n` +
-            `${EMOJI.USER} Hubungi admin untuk info produk.\n` +
-            `${EMOJI.OWNER} Admin: wa.me/628xxxxxx`, 'round')
-        
-        return m.reply(emptyStore)
+        return m.reply(
+            '══════════════════════════════════\n' +
+            'TOKO KOSONG\n' +
+            '══════════════════════════════════\n\n' +
+            'Belum ada produk tersedia.\n\n' +
+            'Hubungi admin untuk info produk.'
+        )
     }
     
-    // Pagination untuk katalog
-    const itemsPerPage = 6
-    const currentPage = pageNumber
-    const startIndex = (currentPage - 1) * itemsPerPage
-    const endIndex = Math.min(startIndex + itemsPerPage, db.length)
+    // Tampilkan semua produk sekaligus
+    let storeText = 
+        '══════════════════════════════════\n' +
+        'ACAMEDIA STORE\n' +
+        '══════════════════════════════════\n\n' +
+        `Total Produk: ${db.length}\n\n`
     
-    // Group by kategori
-    const categories = {}
-    db.slice(startIndex, endIndex).forEach(item => {
-        const cat = item.kategori || 'LAINNYA'
-        if (!categories[cat]) categories[cat] = []
-        categories[cat].push(item)
-    })
-    
-    let storeText = createBox(`${EMOJI.STORE} ACAMEDIA STORE`,
-        `📊 Total: ${db.length} produk\n` +
-        `📈 Halaman: ${currentPage}/${Math.ceil(db.length / itemsPerPage)}\n` +
-        `💰 Nilai toko: ${formatIDR(db.reduce((a, b) => a + (b.harga_jual * b.stok), 0))}\n`, 'normal')
-    
-    storeText += '\n'
-    
-    // Tampilkan produk per kategori
-    for (const [category, items] of Object.entries(categories)) {
-        storeText += `┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n`
-        storeText += `┃ 📁 ${category.toUpperCase().padEnd(28)} ┃\n`
-        storeText += `┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n`
-        
-        items.forEach((item, i) => {
-            const globalIndex = db.indexOf(item) + 1
-            const cost = getFinalPrice(item.harga_jual)
-            const stockIndicator = item.stock > 10 ? '🟢' : item.stock > 0 ? '🟡' : '🔴'
-            
-            storeText += `┣ ${globalIndex}. ${item.nama_barang.substring(0, 25)}${item.nama_barang.length > 25 ? '...' : ''}\n`
-            storeText += `┃   ${EMOJI.PRICE} ${formatIDR(cost.total)} ${stockIndicator} ${item.stok}pcs\n`
-            storeText += `┃   ${EMOJI.PAYMENT} ${usedPrefix}beli ${globalIndex} | 📖 ${usedPrefix}store ${globalIndex}\n`
-            if (i < items.length - 1) storeText += '┃\n'
-        })
-        
-        storeText += '\n'
-    }
-    
-    // Navigasi halaman
-    if (db.length > itemsPerPage) {
-        storeText += `┏━━━━━━━━━━ NAVIGASI ━━━━━━━━━━┓\n`
-        if (currentPage > 1) {
-            storeText += `┃ ${EMOJI.BACK} ${usedPrefix}store ${currentPage - 1}\n`
-        }
-        if (endIndex < db.length) {
-            storeText += `┃ ${EMOJI.NEXT} ${usedPrefix}store ${currentPage + 1}\n`
-        }
-        storeText += `┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n`
-    }
+    storeText += createCompactProductList(db)
     
     // Menu bantuan
-    storeText += `${EMOJI.SEARCH} *CARA PEMBELIAN:*\n`
-    storeText += `1. ${usedPrefix}store - Lihat produk\n`
-    storeText += `2. ${usedPrefix}store [nomor] - Detail produk\n`
-    storeText += `3. ${usedPrefix}beli [nomor] - Beli produk\n`
-    storeText += `4. ${usedPrefix}store [nama] - Cari produk\n\n`
+    storeText += '\n' + '━'.repeat(35) + '\n'
+    storeText += 'CARA PEMBELIAN:\n'
+    storeText += '1. .store - Lihat semua produk\n'
+    storeText += '2. .store [nomor] - Detail produk\n'
+    storeText += '3. .beli [nomor] - Beli produk\n'
+    storeText += '4. .store [nama] - Cari produk\n\n'
     
-    storeText += `${EMOJI.WARNING} *CATATAN:*\n`
-    storeText += `• Pembayaran via QRIS\n`
-    storeText += `• Waktu pembayaran: ${SETTINGS.expired} menit\n`
-    storeText += `• Stok dapat berubah setiap saat\n\n`
+    storeText += 'CATATAN:\n'
+    storeText += `• Pembayaran via QRIS (${SETTINGS.expired} menit)\n`
+    storeText += '• Stok dapat berubah setiap saat\n'
     
     if (isOwner) {
-        storeText += `${EMOJI.OWNER} *MENU ADMIN:*\n`
-        storeText += `• ${usedPrefix}store add - Tambah produk\n`
-        storeText += `• ${usedPrefix}store del [nomor] - Hapus produk\n`
-        storeText += `• ${usedPrefix}store list - Daftar produk\n`
+        storeText += '\n' + '━'.repeat(35) + '\n'
+        storeText += 'MENU ADMIN:\n'
+        storeText += '• .store add - Tambah produk\n'
+        storeText += '• .store del [nomor] - Hapus produk\n'
+        storeText += '• .store list - Daftar produk lengkap\n'
     }
     
     return m.reply(storeText)
@@ -667,14 +553,13 @@ async function createQris(amount, name) {
             product_name: name.substring(0, 50)
         }, { 
             headers: { 
-                'Content-Type': 'application/json',
-                'User-Agent': 'AcamediaStore/1.0'
+                'Content-Type': 'application/json'
             },
             timeout: 10000
         })
         return res.data.payment
     } catch (error) {
-        console.error(`${EMOJI.ERROR} Create QRIS Error:`, error.message)
+        console.error('Create QRIS Error:', error.message)
         throw error
     }
 }
@@ -692,18 +577,18 @@ async function checkStatus(id, amt) {
         })
         return res.data.transaction
     } catch (error) {
-        console.error(`${EMOJI.ERROR} Check Status Error:`, error.message)
+        console.error('Check Status Error:', error.message)
         return null
     }
 }
 
 // Command help
 handler.help = [
-    'store [halaman/nomor/cari]',
+    'store [nomor/cari]',
     'beli [nomor]',
     'store add [nama|kategori|harga|stok|kode] (owner)',
     'store del [nomor] (owner)',
-    'store list [halaman] (owner)'
+    'store list (owner)'
 ]
 
 handler.tags = ['shop', 'payment', 'store']
