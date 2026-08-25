@@ -1,0 +1,144 @@
+// ─────────────────────────────────────────────
+// Message Service
+// Telegram message sending helpers
+// ─────────────────────────────────────────────
+const logger = require('../utils/logger');
+const config = require('../config');
+const userService = require('./userService');
+
+function getTelegram(bot) {
+  if (!bot) return null;
+  if (bot.telegram) return bot.telegram;
+  if (typeof bot.sendMessage === 'function') return bot;
+  return null;
+}
+
+/**
+ * Safely send a message to a user by Telegram ID
+ * @param {object} bot - Telegraf bot instance or Telegram instance or ctx
+ * @param {number} telegramId
+ * @param {string} text
+ * @param {object} [extra] - extra options (parse_mode, reply_markup, etc.)
+ * @returns {Promise<object|null>} sent message or null
+ */
+async function sendToUser(bot, telegramId, text, extra = {}) {
+  try {
+    const telegram = getTelegram(bot);
+    if (!telegram) {
+      logger.error(`Failed to send message to ${telegramId}: Invalid bot/telegram instance`);
+      return null;
+    }
+    return await telegram.sendMessage(telegramId, text, {
+      parse_mode: 'HTML',
+      ...extra,
+    });
+  } catch (err) {
+    logger.error(`Failed to send message to ${telegramId}: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Notify buyer about an event
+ * @param {object} bot
+ * @param {string} buyerId - internal user ID
+ * @param {string} text
+ * @param {object} [extra]
+ */
+async function notifyBuyer(bot, buyerId, text, extra = {}) {
+  const user = userService.getUserById(buyerId);
+  if (!user) return null;
+  return sendToUser(bot, user.telegramId, text, extra);
+}
+
+/**
+ * Notify seller about an event
+ * @param {object} bot
+ * @param {string} sellerId - internal user ID
+ * @param {string} text
+ * @param {object} [extra]
+ */
+async function notifySeller(bot, sellerId, text, extra = {}) {
+  const user = userService.getUserById(sellerId);
+  if (!user) return null;
+  return sendToUser(bot, user.telegramId, text, extra);
+}
+
+/**
+ * Notify all admins and track sent message IDs
+ * @param {object} bot
+ * @param {string} text
+ * @param {object} [extra]
+ * @returns {Promise<Array<{telegramId: number, messageId: number}>>}
+ */
+async function notifyAdmins(bot, text, extra = {}) {
+  const results = [];
+  for (const adminTelegramId of config.ADMIN_IDS) {
+    const result = await sendToUser(bot, adminTelegramId, text, extra);
+    if (result && result.message_id) {
+      results.push({
+        telegramId: adminTelegramId,
+        messageId: result.message_id,
+      });
+    }
+  }
+  return results;
+}
+
+/**
+ * Delete admin notification messages across all admins (except optionally one)
+ * @param {object} bot
+ * @param {Array<{telegramId: number, messageId: number}>} messages
+ * @param {number|null} [keepTelegramId] - If provided, messages for this telegramId won't be deleted
+ */
+async function deleteAdminNotificationMessages(bot, messages, keepTelegramId = null) {
+  if (!Array.isArray(messages) || messages.length === 0) return;
+  const telegram = getTelegram(bot);
+  if (!telegram) return;
+
+  for (const item of messages) {
+    if (keepTelegramId && item.telegramId === keepTelegramId) {
+      continue;
+    }
+    try {
+      await telegram.deleteMessage(item.telegramId, item.messageId).catch(() => {});
+    } catch (e) {
+      logger.warn(`Failed to delete admin notification message ${item.messageId} for ${item.telegramId}: ${e.message}`);
+    }
+  }
+}
+
+/**
+ * Notify the handler of a ticket (seller or admin)
+ * @param {object} bot
+ * @param {object} ticket
+ * @param {string} text
+ * @param {object} [extra]
+ * @returns {Promise<object|null>}
+ */
+async function notifyTicketHandler(bot, ticket, text, extra = {}) {
+  // If ticket has a seller, notify seller
+  if (ticket.sellerId) {
+    const result = await notifySeller(bot, ticket.sellerId, text, extra);
+    if (result) return result;
+  }
+
+  // If ticket has assigned admin, notify them
+  if (ticket.assignedAdminId) {
+    const result = await notifySeller(bot, ticket.assignedAdminId, text, extra);
+    if (result) return result;
+  }
+
+  // Otherwise notify all admins
+  const results = await notifyAdmins(bot, text, extra);
+  return results.length > 0 ? results[0] : null;
+}
+
+module.exports = {
+  sendToUser,
+  notifyBuyer,
+  notifySeller,
+  notifyAdmins,
+  deleteAdminNotificationMessages,
+  notifyTicketHandler,
+};

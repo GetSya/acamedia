@@ -1,0 +1,2165 @@
+// ─────────────────────────────────────────────
+// Admin Handler
+// Admin Panel, Shop Settings, Category CRUD, Product Photo Upload
+// ─────────────────────────────────────────────
+const { Markup } = require('telegraf');
+const fs = require('fs');
+const path = require('path');
+const userService = require('../services/userService');
+const productService = require('../services/productService');
+const orderService = require('../services/orderService');
+const ticketService = require('../services/ticketService');
+const messageService = require('../services/messageService');
+const donationService = require('../services/donationService');
+const pakasirService = require('../services/pakasirService');
+const fulfillmentService = require('../services/fulfillmentService');
+const { formatCurrency, formatDate, formatOrderStatus, formatTicketStatus, formatProductStatus, escapeHtml, truncate } = require('../utils/format');
+const { adminPanelMenu, navRow, paginationRow, safeEditOrReply } = require('../utils/keyboard');
+const config = require('../config');
+const database = require('../database');
+const logger = require('../utils/logger');
+
+// Admin session state
+const adminSessions = new Map();
+
+function requireAdmin(ctx) {
+  if (!userService.isAdmin(ctx.from.id)) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Show Admin Panel
+ */
+async function showAdminPanel(ctx) {
+  if (!requireAdmin(ctx)) {
+    if (ctx.callbackQuery) await ctx.answerCbQuery('Akses ditolak.');
+    return;
+  }
+
+  const text =
+    `⚙️ <b>ADMIN PANEL</b>\n` +
+    `━━━━━━━━━━━━━━━━━━━\n\n` +
+    `Silakan pilih menu kelola di bawah ini:`;
+
+  const keyboard = adminPanelMenu();
+  return safeEditOrReply(ctx, text, keyboard);
+}
+
+// ── Products Management ──
+
+async function showAdminProducts(ctx, page = 0) {
+  if (!requireAdmin(ctx)) return;
+
+  const productGroups = productService.getAllProductGroups();
+  const allProducts = productService.getAllProducts();
+  const inactiveProducts = allProducts.filter((p) => p.status === 'inactive');
+
+  const perPage = config.ITEMS_PER_PAGE;
+  const totalPages = Math.max(1, Math.ceil(productGroups.length / perPage));
+  const currentPage = Math.min(page, totalPages - 1);
+  const start = currentPage * perPage;
+  const pageGroups = productGroups.slice(start, start + perPage);
+
+  let text = `📦 <b>KELOLA PRODUK</b> (${productGroups.length} Produk Utama)\n\n`;
+
+  if (productGroups.length === 0) {
+    text += 'Belum ada produk aktif.';
+  } else {
+    pageGroups.forEach((g, i) => {
+      const num = start + i + 1;
+      if (g.hasVariants) {
+        const variantSummary = g.items
+          .map((v) => `${v.variant || 'Standard'} (${formatCurrency(v.price)}, Stok: ${v.stock})`)
+          .join(' | ');
+        text += `<b>${num}. ${escapeHtml(g.name)}</b> (${g.count} Varian)\n`;
+        text += `    ${escapeHtml(variantSummary)}\n\n`;
+      } else {
+        const p = g.sampleProduct;
+        const imgLabel = p.image ? '🖼️ Foto' : '📷 Tanpa Foto';
+        text += `<b>${num}. ${escapeHtml(p.name)}</b>\n`;
+        text += `    ${formatCurrency(p.price)} | Stok: ${p.stock} | ${imgLabel} | ${formatProductStatus(p.status)}\n\n`;
+      }
+    });
+  }
+
+  const buttons = [];
+
+  pageGroups.forEach((g) => {
+    if (g.hasVariants) {
+      const encName = encodeURIComponent(g.name);
+      buttons.push([
+        Markup.button.callback(`✏️ Kelola ${truncate(g.name, 16)} (${g.count} Varian)`, `adm_grp_edit_${encName}`),
+      ]);
+    } else {
+      const p = g.sampleProduct;
+      buttons.push([
+        Markup.button.callback(`✏️ ${truncate(p.name, 16)}`, `adm_prod_edit_${p.id}`),
+        Markup.button.callback('🖼️ Foto', `adm_prod_photo_${p.id}`),
+        Markup.button.callback('🗑️ Nonaktifkan', `adm_prod_del_${p.id}`),
+      ]);
+    }
+  });
+
+  buttons.push([Markup.button.callback('➕ Tambah Produk Baru', 'adm_prod_add')]);
+
+  if (inactiveProducts.length > 0) {
+    buttons.push([Markup.button.callback(`⛔ Produk Nonaktif (${inactiveProducts.length})`, 'adm_prod_inactive')]);
+  }
+
+  if (totalPages > 1) {
+    buttons.push(paginationRow('adm_prod_page', currentPage, totalPages));
+  }
+
+  buttons.push(navRow('admin_panel'));
+
+  return safeEditOrReply(ctx, text, { reply_markup: { inline_keyboard: buttons } });
+}
+
+/**
+ * Show admin sub-menu for managing variants of a product group
+ */
+async function showAdminGroupVariants(ctx, productName) {
+  if (!requireAdmin(ctx)) return;
+
+  const variants = productService.getProductsByNameAll(productName);
+  if (variants.length === 0) {
+    if (ctx.callbackQuery) await ctx.answerCbQuery('Produk tidak ditemukan.');
+    return showAdminProducts(ctx, 0);
+  }
+
+  const parentProduct = variants[0];
+  let text =
+    `⚙️ <b>KELOLA VARIAN: ${escapeHtml(productName)}</b> (${variants.length} Varian)\n` +
+    `━━━━━━━━━━━━━━━━━━━\n\n` +
+    `Pilih varian di bawah ini untuk mengedit harga, nama varian, stok, atau status:\n\n`;
+
+  variants.forEach((v, i) => {
+    const varLabel = v.variant ? escapeHtml(v.variant) : 'Standard';
+    text += `<b>${i + 1}. Varian: ${varLabel}</b>\n`;
+    text += `    Harga: ${formatCurrency(v.price)} | Stok: ${v.stock} | ${formatProductStatus(v.status)}\n\n`;
+  });
+
+  const buttons = [];
+
+  variants.forEach((v) => {
+    const varLabel = v.variant ? v.variant : v.name;
+    buttons.push([
+      Markup.button.callback(`✏️ Edit Varian: ${truncate(varLabel, 18)}`, `adm_prod_edit_${v.id}`),
+      Markup.button.callback('🗑️', `adm_prod_del_${v.id}`),
+    ]);
+  });
+
+  buttons.push([
+    Markup.button.callback('➕ Tambah Varian Baru', `adm_prod_add_var_${parentProduct.id}`),
+  ]);
+
+  buttons.push(navRow('admin_products'));
+
+  return safeEditOrReply(ctx, text, { reply_markup: { inline_keyboard: buttons } });
+}
+
+
+/**
+ * View & Manage Inactive (Nonaktif) products page
+ */
+async function showAdminInactiveProducts(ctx, page = 0) {
+  if (!requireAdmin(ctx)) return;
+
+  const allProducts = productService.getAllProducts();
+  const inactiveProducts = allProducts.filter((p) => p.status === 'inactive');
+
+  const perPage = config.ITEMS_PER_PAGE;
+  const totalPages = Math.max(1, Math.ceil(inactiveProducts.length / perPage));
+  const currentPage = Math.min(page, totalPages - 1);
+  const start = currentPage * perPage;
+  const pageProducts = inactiveProducts.slice(start, start + perPage);
+
+  let text = `⛔ <b>PRODUK NONAKTIF</b> (${inactiveProducts.length})\n\n`;
+
+  if (inactiveProducts.length === 0) {
+    text += 'Tidak ada produk nonaktif.';
+  } else {
+    pageProducts.forEach((p, i) => {
+      const num = start + i + 1;
+      const imgLabel = p.image ? '🖼️ Ada Foto' : '📷 Tanpa Foto';
+      text += `<b>${num}.</b> ${escapeHtml(p.name)}\n`;
+      text += `    ${formatCurrency(p.price)} | Stok: ${p.stock} | ${imgLabel} | ⛔ Nonaktif\n\n`;
+    });
+  }
+
+  const buttons = [];
+
+  pageProducts.forEach((p) => {
+    buttons.push([
+      Markup.button.callback(`✏️ ${truncate(p.name, 14)}`, `adm_prod_edit_${p.id}`),
+      Markup.button.callback('✅ Aktifkan Kembali', `adm_prod_restore_${p.id}`),
+    ]);
+  });
+
+  if (totalPages > 1) {
+    buttons.push(paginationRow('adm_prod_inactive_page', currentPage, totalPages));
+  }
+
+  buttons.push(navRow('admin_products'));
+
+  return safeEditOrReply(ctx, text, { reply_markup: { inline_keyboard: buttons } });
+}
+
+// ── Categories Management & CRUD ──
+
+async function showAdminCategories(ctx) {
+  if (!requireAdmin(ctx)) return;
+
+  const categories = productService.getAllCategoriesRaw();
+
+  let text = `🏷 <b>KELOLA KATEGORI</b> (${categories.length})\n\n`;
+
+  categories.forEach((c, i) => {
+    const statusLabel = c.status === 'active' ? '✅ Aktif' : '⛔ Nonaktif';
+    text += `<b>${i + 1}.</b> ${c.emoji} <b>${escapeHtml(c.name)}</b> (${statusLabel})\n`;
+    text += `    ID: <code>${c.id}</code>\n\n`;
+  });
+
+  const buttons = [];
+
+  categories.forEach((c) => {
+    buttons.push([
+      Markup.button.callback(`✏️ ${c.emoji} ${c.name}`, `adm_cat_edit_${c.id}`),
+      Markup.button.callback(c.status === 'active' ? '⛔ Nonaktif' : '✅ Aktif', `adm_cat_toggle_${c.id}`),
+    ]);
+  });
+
+  buttons.push([Markup.button.callback('➕ Tambah Kategori Baru', 'adm_cat_add')]);
+  buttons.push(navRow('admin_panel'));
+
+  return safeEditOrReply(ctx, text, { reply_markup: { inline_keyboard: buttons } });
+}
+
+// ── Orders Management ──
+
+async function showAdminOrders(ctx, page = 0) {
+  if (!requireAdmin(ctx)) return;
+
+  const orders = orderService.getAllOrders();
+  const perPage = config.ITEMS_PER_PAGE;
+  const totalPages = Math.max(1, Math.ceil(orders.length / perPage));
+  const currentPage = Math.min(page, totalPages - 1);
+  const start = currentPage * perPage;
+  const pageOrders = orders.slice(start, start + perPage);
+
+  let text = `🛒 <b>SEMUA ORDER</b> (${orders.length})\n\n`;
+
+  if (orders.length === 0) {
+    text += 'Belum ada order.';
+  } else {
+    pageOrders.forEach((o, i) => {
+      const num = start + i + 1;
+      text += `<b>${num}.</b> #${o.id}\n`;
+      text += `    ${escapeHtml(o.productName)} | ${formatCurrency(o.total)}\n`;
+      text += `    ${formatOrderStatus(o.status)}\n\n`;
+    });
+  }
+
+  const buttons = pageOrders.map((o) => [
+    Markup.button.callback(`📋 #${o.id}`, `adm_order_${o.id}`),
+  ]);
+
+  if (totalPages > 1) {
+    buttons.push(paginationRow('adm_orders_page', currentPage, totalPages));
+  }
+
+  buttons.push(navRow('admin_panel'));
+
+  return safeEditOrReply(ctx, text, { reply_markup: { inline_keyboard: buttons } });
+}
+
+/**
+ * Admin Order Detail View
+ */
+async function showAdminOrderDetail(ctx, orderId) {
+  if (!requireAdmin(ctx)) return;
+
+  const order = orderService.getOrderById(orderId);
+  if (!order) {
+    await ctx.answerCbQuery('Order tidak ditemukan.');
+    return;
+  }
+
+  const buyer = userService.getUserById(order.buyerId);
+
+  const text =
+    `🛒 <b>ADMIN - ORDER #${order.id}</b>\n\n` +
+    `<b>Produk:</b> ${escapeHtml(order.productName)}\n` +
+    `<b>Total:</b> ${formatCurrency(order.total)}\n` +
+    `<b>Buyer:</b> ${buyer ? escapeHtml(buyer.firstName || buyer.username) : '-'}\n` +
+    `<b>Status:</b> ${formatOrderStatus(order.status)}\n` +
+    `<b>Ticket:</b> ${order.ticketId ? '#' + order.ticketId : '-'}\n` +
+    `<b>Dibuat:</b> ${formatDate(order.createdAt)}\n`;
+
+  const buttons = [
+    [
+      Markup.button.callback('✅ Payment Berhasil', `adm_quick_pay_${order.id}_paid`),
+      Markup.button.callback('❌ Payment Gagal', `adm_quick_pay_${order.id}_cancelled`),
+    ],
+  ];
+
+  const nextStatuses = orderService.getNextStatuses(order.status);
+  if (nextStatuses.length > 0) {
+    nextStatuses.forEach((ns) => {
+      buttons.push([
+        Markup.button.callback(`→ Transisi Ke: ${formatOrderStatus(ns)}`, `adm_order_status_${order.id}_${ns}`),
+      ]);
+    });
+  }
+
+  if (order.ticketId) {
+    buttons.push([Markup.button.callback('🎫 Buka Ticket', `ticket_open_${order.ticketId}`)]);
+  }
+
+  buttons.push(navRow('admin_orders'));
+
+  return safeEditOrReply(ctx, text, { reply_markup: { inline_keyboard: buttons } });
+}
+
+// ── Tickets Management ──
+
+async function showAdminTickets(ctx, filter = 'all', page = 0) {
+  if (!requireAdmin(ctx)) return;
+
+  const allTickets = ticketService.getAllTickets();
+
+  // Exclude closed tickets; filter by tab
+  let filtered = allTickets.filter((t) => t.status !== 'closed');
+  if (filter === 'unread') {
+    filtered = filtered.filter((t) => t.readStatus === 'unread' && !t.chatActive);
+  } else if (filter === 'read') {
+    filtered = filtered.filter((t) => t.readStatus === 'read' && !t.chatActive);
+  } else if (filter === 'active') {
+    filtered = filtered.filter((t) => t.chatActive === true);
+  }
+
+  const perPage = config.ITEMS_PER_PAGE;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
+  const currentPage = Math.min(page, totalPages - 1);
+  const start = currentPage * perPage;
+  const pageTickets = filtered.slice(start, start + perPage);
+
+  // Count badges
+  const allActive = allTickets.filter((t) => t.status !== 'closed');
+  const unreadCount = allActive.filter((t) => t.readStatus === 'unread' && !t.chatActive).length;
+  const readCount  = allActive.filter((t) => t.readStatus === 'read' && !t.chatActive).length;
+  const activeCount= allActive.filter((t) => t.chatActive === true).length;
+
+  const filterLabel = filter === 'unread' ? '🔴 Belum Dibaca'
+    : filter === 'read'   ? '🟡 Sudah Dibaca'
+    : filter === 'active' ? '🟢 Sesi Aktif'
+    : '📋 Semua';
+
+  let text = `🎫 <b>TICKET ADMIN</b> — ${filterLabel} (${filtered.length})\n\n`;
+
+  if (filtered.length === 0) {
+    text += '<i>Tidak ada tiket di kategori ini.</i>';
+  } else {
+    pageTickets.forEach((t, i) => {
+      const num = start + i + 1;
+      let statusIcon = t.chatActive ? '🟢' : (t.readStatus === 'unread' ? '🔴' : '🟡');
+      text += `<b>${num}.</b> ${statusIcon} #${t.id}\n`;
+      if (t.orderId) text += `    Order: #${t.orderId}\n`;
+      text += `\n`;
+    });
+  }
+
+  const buttons = [];
+
+  // Filter tab buttons
+  buttons.push([
+    Markup.button.callback(`🔴 Belum Dibaca${unreadCount > 0 ? ' (' + unreadCount + ')' : ''}`, `adm_tkt_filter_unread`),
+    Markup.button.callback(`🟡 Dibaca${readCount > 0 ? ' (' + readCount + ')' : ''}`, `adm_tkt_filter_read`),
+  ]);
+  buttons.push([
+    Markup.button.callback(`🟢 Aktif${activeCount > 0 ? ' (' + activeCount + ')' : ''}`, `adm_tkt_filter_active`),
+    Markup.button.callback(`📋 Semua (${allActive.length})`, `adm_tkt_filter_all`),
+  ]);
+
+  // Ticket list buttons
+  pageTickets.forEach((t) => {
+    const icon = t.chatActive ? '🟢' : (t.readStatus === 'unread' ? '🔴' : '🟡');
+    buttons.push([Markup.button.callback(`${icon} #${t.id}`, `ticket_${t.id}`)]);
+  });
+
+  if (totalPages > 1) {
+    buttons.push(paginationRow('adm_tickets_page', currentPage, totalPages));
+  }
+
+  buttons.push(navRow('admin_panel'));
+
+  return safeEditOrReply(ctx, text, { reply_markup: { inline_keyboard: buttons } });
+}
+
+
+// ── Users Management ──
+
+async function showAdminUsers(ctx, page = 0) {
+  if (!requireAdmin(ctx)) return;
+
+  const users = userService.getAllUsers();
+  const perPage = config.ITEMS_PER_PAGE;
+  const totalPages = Math.max(1, Math.ceil(users.length / perPage));
+  const currentPage = Math.min(page, totalPages - 1);
+  const start = currentPage * perPage;
+  const pageUsers = users.slice(start, start + perPage);
+
+  const roleEmoji = { admin: '⚙️', seller: '👨‍💼', buyer: '👤' };
+
+  let text = `👥 <b>USERS</b> (${users.length})\n\n`;
+
+  if (users.length === 0) {
+    text += 'Belum ada user.';
+  } else {
+    pageUsers.forEach((u, i) => {
+      const num = start + i + 1;
+      const name = u.firstName || u.username || '-';
+      const rEmoji = roleEmoji[u.role] || '👤';
+      text += `<b>${num}.</b> ${escapeHtml(name)} ${rEmoji}\n`;
+      text += `    ID: ${u.id} | Role: ${u.role}\n`;
+      text += `    TG: <code>${u.telegramId}</code>\n\n`;
+    });
+  }
+
+  const buttons = [];
+
+  // Per-user action button
+  pageUsers.forEach((u) => {
+    buttons.push([
+      Markup.button.callback(`👤 ${truncate(u.firstName || u.username || u.id, 14)} (${u.role})`, `adm_user_detail_${u.id}`),
+    ]);
+  });
+
+  if (totalPages > 1) {
+    buttons.push(paginationRow('adm_users_page', currentPage, totalPages));
+  }
+  buttons.push([Markup.button.callback('⚙️ Kelola Admin', 'adm_manage_admins')]);
+  buttons.push(navRow('admin_panel'));
+
+  return safeEditOrReply(ctx, text, { reply_markup: { inline_keyboard: buttons } });
+}
+
+/**
+ * Show Admin Management page — list all DB-role admins
+ */
+async function showAdminManagement(ctx) {
+  if (!requireAdmin(ctx)) return;
+
+  const admins = userService.getAllAdmins();
+  const superAdminIds = config.ADMIN_IDS;
+
+  let text =
+    `⚙️ <b>KELOLA ADMIN</b>\n` +
+    `━━━━━━━━━━━━━━━━━━━\n\n` +
+    `<b>Admin dari .env (Super Admin):</b>\n`;
+
+  if (superAdminIds.length === 0) {
+    text += `  <i>Tidak ada</i>\n`;
+  } else {
+    superAdminIds.forEach((id) => {
+      const u = userService.findByTelegramId(id);
+      const name = u ? escapeHtml(u.firstName || u.username || String(id)) : String(id);
+      text += `  ⭐ ${name} (<code>${id}</code>)\n`;
+    });
+  }
+
+  text += `\n<b>Admin dari Database (${admins.length}):</b>\n`;
+
+  if (admins.length === 0) {
+    text += `  <i>Belum ada.</i>\n`;
+  } else {
+    admins.forEach((a, i) => {
+      const isSuperAdmin = superAdminIds.includes(a.telegramId);
+      const name = escapeHtml(a.firstName || a.username || '-');
+      text += `  <b>${i + 1}.</b> ${name} <code>${a.telegramId}</code>${isSuperAdmin ? ' ⭐' : ''}\n`;
+    });
+  }
+
+  text += `\n<i>Gunakan tombol di bawah untuk menambah atau mencabut admin.</i>`;
+
+  const buttons = [
+    [Markup.button.callback('➕ Tambah Admin', 'adm_admin_add')],
+  ];
+
+  // Show revoke buttons for DB admins that are NOT super admins from .env
+  admins
+    .filter((a) => !superAdminIds.includes(a.telegramId))
+    .forEach((a) => {
+      const name = truncate(a.firstName || a.username || a.id, 16);
+      buttons.push([
+        Markup.button.callback(`❌ Cabut: ${name}`, `adm_admin_revoke_${a.telegramId}`),
+      ]);
+    });
+
+  buttons.push(navRow('admin_users'));
+  return safeEditOrReply(ctx, text, { reply_markup: { inline_keyboard: buttons } });
+}
+
+/**
+ * Show a single user detail + role management buttons
+ */
+async function showUserDetail(ctx, userId) {
+  if (!requireAdmin(ctx)) return;
+
+  const user = userService.getUserById(userId);
+  if (!user) {
+    await ctx.answerCbQuery('User tidak ditemukan.').catch(() => {});
+    return;
+  }
+
+  const roleLabels = { buyer: '👤 Buyer', seller: '👨‍💼 Seller', admin: '⚙️ Admin' };
+  const isSuperAdmin = config.ADMIN_IDS.includes(user.telegramId);
+
+  const text =
+    `👤 <b>DETAIL USER</b>\n` +
+    `━━━━━━━━━━━━━━━━━━━\n\n` +
+    `<b>ID:</b> ${user.id}\n` +
+    `<b>Nama:</b> ${escapeHtml(user.firstName || '-')}\n` +
+    `<b>Username:</b> ${user.username ? '@' + escapeHtml(user.username) : '-'}\n` +
+    `<b>Telegram ID:</b> <code>${user.telegramId}</code>\n` +
+    `<b>Role:</b> ${roleLabels[user.role] || user.role}${isSuperAdmin ? ' ⭐ Super Admin' : ''}\n` +
+    `<b>Status:</b> ${user.status === 'active' ? '✅ Aktif' : '⛔ Nonaktif'}\n` +
+    `<b>Bergabung:</b> ${formatDate(user.createdAt)}\n\n` +
+    `<i>Pilih aksi di bawah:</i>`;
+
+  const buttons = [];
+
+  if (!isSuperAdmin) {
+    // Role change buttons
+    if (user.role !== 'admin') {
+      buttons.push([Markup.button.callback('⚙️ Jadikan Admin', `adm_role_set_${user.id}_admin`)]);
+    } else {
+      buttons.push([Markup.button.callback('❌ Cabut Admin → Buyer', `adm_role_set_${user.id}_buyer`)]);
+    }
+    if (user.role !== 'seller') {
+      buttons.push([Markup.button.callback('👨‍💼 Jadikan Seller', `adm_role_set_${user.id}_seller`)]);
+    }
+    if (user.role !== 'buyer' && user.role !== 'admin') {
+      buttons.push([Markup.button.callback('👤 Jadikan Buyer', `adm_role_set_${user.id}_buyer`)]);
+    }
+  } else {
+    buttons.push([Markup.button.callback('⭐ Super Admin (dari .env)', 'noop')]);
+  }
+
+  buttons.push(navRow('admin_users'));
+  return safeEditOrReply(ctx, text, { reply_markup: { inline_keyboard: buttons } });
+}
+
+// ── Sellers Management ──
+
+async function showAdminSellers(ctx) {
+  if (!requireAdmin(ctx)) return;
+
+  const sellers = userService.getAllSellers();
+
+  let text = `👨‍💼 <b>SELLERS</b> (${sellers.length})\n\n`;
+
+  if (sellers.length === 0) {
+    text += 'Belum ada seller.\n\nGunakan menu di bawah untuk menambahkan seller.';
+  } else {
+    sellers.forEach((s, i) => {
+      const name = s.firstName || s.username || '-';
+      text += `<b>${i + 1}.</b> ${escapeHtml(name)}\n`;
+      text += `    ID: ${s.id} | TG: <code>${s.telegramId}</code>\n\n`;
+    });
+  }
+
+  const buttons = [
+    [Markup.button.callback('➕ Tambah Seller', 'adm_seller_add')],
+    navRow('admin_panel'),
+  ];
+
+  return safeEditOrReply(ctx, text, { reply_markup: { inline_keyboard: buttons } });
+}
+
+// ── Shop Settings (Pengaturan Toko) ──
+
+async function showShopSettings(ctx) {
+  if (!requireAdmin(ctx)) return;
+
+  const settings = productService.getShopSettings();
+  const shopName = escapeHtml(settings.shopName || 'Marketplace Store');
+  const shopDesc = escapeHtml(settings.shopDescription || '-');
+  const logoStatus = settings.shopLogo ? '🖼️ Ada Logo' : '📷 Tanpa Logo';
+  const waSupport = escapeHtml(settings.supportWhatsapp || '-');
+  const tgSupport = escapeHtml(settings.supportTelegram ? `@${settings.supportTelegram.replace(/^@/, '')}` : '-');
+  const slug = pakasirService.getSlug();
+  const apiKey = pakasirService.getApiKey();
+
+  const text =
+    `⚙️ <b>PENGATURAN TOKO & KONTAK SUPPORT</b>\n` +
+    `━━━━━━━━━━━━━━━━━━━\n\n` +
+    `🏪 <b>Nama Toko:</b>\n${shopName}\n\n` +
+    `📝 <b>Deskripsi Toko:</b>\n${shopDesc}\n\n` +
+    `📱 <b>WhatsApp Support:</b>\n<code>${waSupport}</code>\n\n` +
+    `✈️ <b>Telegram Support:</b>\n<code>${tgSupport}</code>\n\n` +
+    `💳 <b>Pakasir Project Slug:</b>\n<code>${escapeHtml(slug)}</code>\n\n` +
+    `🔑 <b>Pakasir API Key:</b>\n<code>${truncate(apiKey, 35)}</code>\n`;
+
+  const buttons = [
+    [Markup.button.callback('✏️ Edit Nama Toko', 'adm_set_name')],
+    [Markup.button.callback('✏️ Edit Deskripsi Toko', 'adm_set_desc')],
+    [Markup.button.callback('📱 Edit WA Support', 'adm_set_wasupport')],
+    [Markup.button.callback('✈️ Edit Telegram Support', 'adm_set_tgsupport')],
+    [Markup.button.callback('🖼️ Upload Logo Toko', 'adm_set_logo')],
+    [Markup.button.callback('💳 Edit Pakasir Slug', 'adm_set_pakasir_slug')],
+    [Markup.button.callback('🔑 Edit Pakasir API Key', 'adm_set_pakasir_key')],
+    navRow('admin_panel'),
+  ];
+
+  return safeEditOrReply(ctx, text, { reply_markup: { inline_keyboard: buttons } });
+}
+
+// ── Mustika Payment Balance ──
+
+async function showMustikaBalance(ctx) {
+  if (!requireAdmin(ctx)) return;
+
+  try {
+    if (ctx.callbackQuery) {
+      await ctx.answerCbQuery('🔄 Mengambil saldo Mustika Payment...').catch(() => {});
+    }
+
+    const bal = await mustikaService.getBalance();
+    const available = formatCurrency(bal.balance_available || 0);
+    const pending = formatCurrency(bal.balance_pending || 0);
+
+    const text =
+      `💰 <b>INFORMASI SALDO MUSTIKA PAYMENT</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━\n\n` +
+      `👤 <b>Username:</b> <code>${escapeHtml(bal.username || '-')}</code>\n\n` +
+      `💵 <b>Saldo Tersedia:</b>\n<b>${available}</b>\n\n` +
+      `⏳ <b>Saldo Pending:</b>\n<b>${pending}</b>\n`;
+
+    const buttons = [
+      [Markup.button.callback('🔄 Refresh Saldo', 'adm_mustika_balance')],
+      navRow('admin_panel'),
+    ];
+
+    return safeEditOrReply(ctx, text, { reply_markup: { inline_keyboard: buttons } });
+  } catch (err) {
+    logger.error('Failed to show Mustika balance:', err.message);
+    await ctx.reply(`❌ <b>Gagal mengambil data saldo:</b> ${escapeHtml(err.message)}`, {
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: [navRow('admin_panel')] },
+    });
+  }
+}
+
+// ── Statistics ──
+
+async function showAdminStats(ctx) {
+  if (!requireAdmin(ctx)) return;
+
+  const users = userService.getAllUsers();
+  const products = productService.getAllProducts();
+  const orders = orderService.getAllOrders();
+  const tickets = ticketService.getAllTickets();
+  const sellers = userService.getAllSellers();
+  const donations = donationService.getAllDonations();
+
+  const activeOrders = orders.filter((o) => !['completed', 'cancelled', 'refunded'].includes(o.status));
+  const openTickets = tickets.filter((t) => t.status !== 'closed');
+  const totalRevenue = orders
+    .filter((o) => ['paid', 'processing', 'completed'].includes(o.status))
+    .reduce((sum, o) => sum + o.total, 0);
+
+  const totalDonationAmount = donations.reduce((sum, d) => sum + Number(d.nominal), 0);
+
+  const text =
+    `📊 <b>STATISTIK MARKETPLACE</b>\n\n` +
+    `👥 <b>Total Users:</b> ${users.length}\n` +
+    `👨‍💼 <b>Total Sellers:</b> ${sellers.length}\n` +
+    `📦 <b>Total Produk:</b> ${products.length}\n` +
+    `🛒 <b>Total Order:</b> ${orders.length}\n` +
+    `🔄 <b>Order Aktif:</b> ${activeOrders.length}\n` +
+    `🎫 <b>Total Ticket:</b> ${tickets.length}\n` +
+    `🟢 <b>Ticket Open:</b> ${openTickets.length}\n` +
+    `💰 <b>Total Pendapatan:</b> ${formatCurrency(totalRevenue)}\n` +
+    `🎁 <b>Total Donasi:</b> ${formatCurrency(totalDonationAmount)} (${donations.length}x)\n`;
+
+  const buttons = [navRow('admin_panel')];
+
+  return safeEditOrReply(ctx, text, { reply_markup: { inline_keyboard: buttons } });
+}
+
+// ── Session Helpers ──
+
+function getAdminSession(telegramId) {
+  return adminSessions.get(telegramId) || null;
+}
+
+function setAdminSession(telegramId, session) {
+  adminSessions.set(telegramId, session);
+}
+
+function clearAdminSession(telegramId) {
+  adminSessions.delete(telegramId);
+}
+
+/**
+ * Handle photo uploads for Shop Logo or Product Images
+ */
+async function handleAdminPhoto(ctx) {
+  if (!userService.isAdmin(ctx.from.id)) return false;
+
+  const session = getAdminSession(ctx.from.id);
+  if (!session) return false;
+
+  if (session.step === 'upload_shop_logo') {
+    const photos = ctx.message.photo;
+    if (!photos || photos.length === 0) return false;
+
+    const highestRes = photos[photos.length - 1];
+    const fileId = highestRes.file_id;
+
+    try {
+      const fileLink = await ctx.telegram.getFileLink(fileId);
+      const fetch = (await import('node-fetch')).default || globalThis.fetch;
+      const res = await fetch(fileLink.href);
+      const buffer = Buffer.from(await res.arrayBuffer());
+
+      const logoPath = path.join(database.MEDIA_DIR, 'logo.jpg');
+      fs.writeFileSync(logoPath, buffer);
+
+      await productService.updateShopSettings({ shopLogo: 'media/logo.jpg' });
+      clearAdminSession(ctx.from.id);
+
+      await ctx.reply('✅ Logo toko berhasil diperbarui!');
+      await showShopSettings(ctx);
+      return true;
+    } catch (err) {
+      logger.error('Failed to download shop logo:', err.message);
+      await ctx.reply('❌ Gagal mengunggah logo toko.');
+      return true;
+    }
+  }
+
+  if (session.step === 'upload_product_photo') {
+    const photos = ctx.message.photo;
+    if (!photos || photos.length === 0) return false;
+
+    const productId = session.data.productId;
+    const highestRes = photos[photos.length - 1];
+    const fileId = highestRes.file_id;
+
+    try {
+      const fileLink = await ctx.telegram.getFileLink(fileId);
+      const fetch = (await import('node-fetch')).default || globalThis.fetch;
+      const res = await fetch(fileLink.href);
+      const buffer = Buffer.from(await res.arrayBuffer());
+
+      const fileName = `${productId}.jpg`;
+      const itemPath = path.join(database.ITEM_MEDIA_DIR, fileName);
+      fs.writeFileSync(itemPath, buffer);
+
+      const relPath = `media/item/${fileName}`;
+      await productService.updateProduct(productId, { image: relPath });
+      clearAdminSession(ctx.from.id);
+
+      await ctx.reply(`✅ Foto produk <b>${productId}</b> berhasil diunggah!`, { parse_mode: 'HTML' });
+      return true;
+    } catch (err) {
+      logger.error('Failed to download product photo:', err.message);
+      await ctx.reply('❌ Gagal mengunggah foto produk.');
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Handle admin text input
+ */
+async function handleAdminInput(ctx) {
+  if (!userService.isAdmin(ctx.from.id)) return false;
+
+  const session = getAdminSession(ctx.from.id);
+  if (!session) return false;
+
+  const text = ctx.message.text;
+
+  // ── Shop Settings Text Inputs ──
+  if (session.step === 'edit_shop_name') {
+    await productService.updateShopSettings({ shopName: text });
+    clearAdminSession(ctx.from.id);
+    await ctx.reply('✅ Nama toko berhasil diupdate!');
+    await showShopSettings(ctx);
+    return true;
+  }
+
+  if (session.step === 'edit_shop_desc') {
+    await productService.updateShopSettings({ shopDescription: text });
+    clearAdminSession(ctx.from.id);
+    await ctx.reply('✅ Deskripsi toko berhasil diupdate!');
+    await showShopSettings(ctx);
+    return true;
+  }
+
+  if (session.step === 'edit_pakasir_slug') {
+    try {
+      await pakasirService.setPakasirConfig({ slug: text.trim() });
+      clearAdminSession(ctx.from.id);
+      await ctx.reply(`✅ Pakasir Project Slug berhasil diupdate ke <code>${escapeHtml(text.trim())}</code>!`, { parse_mode: 'HTML' });
+      await showShopSettings(ctx);
+    } catch (err) {
+      await ctx.reply(`❌ ${escapeHtml(err.message)}`);
+    }
+    return true;
+  }
+
+  if (session.step === 'edit_pakasir_key') {
+    try {
+      await pakasirService.setPakasirConfig({ apiKey: text.trim() });
+      clearAdminSession(ctx.from.id);
+      await ctx.reply('✅ Pakasir API Key berhasil diupdate!', { parse_mode: 'HTML' });
+      await showShopSettings(ctx);
+    } catch (err) {
+      await ctx.reply(`❌ ${escapeHtml(err.message)}`);
+    }
+    return true;
+  }
+
+  if (session.step === 'awaiting_account_credentials') {
+    const orderId = session.data?.orderId;
+    if (orderId) {
+      await fulfillmentService.completeFulfillmentWithData(ctx.telegram, orderId, text);
+      clearAdminSession(ctx.from.id);
+      await ctx.reply(`✅ <b>Data akun untuk Order #${orderId} berhasil dikirimkan ke pembeli!</b>`, { parse_mode: 'HTML' });
+    }
+    return true;
+  }
+
+  if (session.step === 'edit_wa_support') {
+    const cleanNum = text.replace(/[^0-9]/g, '');
+    await productService.updateShopSettings({ supportWhatsapp: cleanNum });
+    clearAdminSession(ctx.from.id);
+    await ctx.reply(`✅ Nomor WhatsApp Support berhasil diupdate ke <code>${cleanNum}</code>!`, { parse_mode: 'HTML' });
+    await showShopSettings(ctx);
+    return true;
+  }
+
+  if (session.step === 'edit_tg_support') {
+    const cleanTg = text.replace(/^@/, '').trim();
+    await productService.updateShopSettings({ supportTelegram: cleanTg });
+    clearAdminSession(ctx.from.id);
+    await ctx.reply(`✅ Telegram Support Username berhasil diupdate ke <code>@${cleanTg}</code>!`, { parse_mode: 'HTML' });
+    await showShopSettings(ctx);
+    return true;
+  }
+
+  // ── Add Product Flow ──
+  if (session.step === 'add_product_name') {
+    setAdminSession(ctx.from.id, {
+      step: 'add_product_category',
+      data: { ...session.data, name: text },
+    });
+
+    const categories = productService.getAllCategories();
+    const catButtons = categories.map((c) => [
+      Markup.button.callback(`${c.emoji} ${c.name}`, `adm_prod_sel_cat_${c.id}`),
+    ]);
+
+    await ctx.reply('📦 Pilih <b>kategori produk</b> di bawah ini:', {
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: catButtons },
+    });
+    return true;
+  }
+
+  if (session.step === 'add_product_desc') {
+    setAdminSession(ctx.from.id, {
+      ...session,
+      step: 'add_product_variant',
+      data: { ...session.data, description: text },
+    });
+    const buttons = [[Markup.button.callback('⏩ Tanpa Varian', 'adm_prod_skip_variant')]];
+    await ctx.reply(
+      '🏷️ Masukkan <b>nama varian</b> (contoh: "1 Bulan", "2 Bulan", "Private", atau klik tombol di bawah / ketik "-" jika tanpa varian):',
+      { parse_mode: 'HTML', reply_markup: { inline_keyboard: buttons } }
+    );
+    return true;
+  }
+
+  if (session.step === 'add_product_variant') {
+    const variantVal = (text.trim() === '-' || text.trim() === '') ? null : text.trim();
+    setAdminSession(ctx.from.id, {
+      ...session,
+      step: 'add_product_price',
+      data: { ...session.data, variant: variantVal },
+    });
+    await ctx.reply('💰 Masukkan <b>harga</b> (angka saja):', { parse_mode: 'HTML' });
+    return true;
+  }
+
+  if (session.step === 'add_product_price') {
+    const price = parseInt(text.replace(/\D/g, ''), 10);
+    if (isNaN(price) || price <= 0) {
+      await ctx.reply('❌ Harga harus berupa angka positif.', { parse_mode: 'HTML' });
+      return true;
+    }
+    setAdminSession(ctx.from.id, {
+      ...session,
+      step: 'add_product_stock',
+      data: { ...session.data, price },
+    });
+    await ctx.reply('📦 Masukkan <b>stok awal</b> (angka):', { parse_mode: 'HTML' });
+    return true;
+  }
+
+  if (session.step === 'add_product_stock') {
+    const stock = parseInt(text, 10);
+    if (isNaN(stock) || stock < 0) {
+      await ctx.reply('❌ Stok harus berupa angka >= 0.', { parse_mode: 'HTML' });
+      return true;
+    }
+
+    // Save stock then ask about order note
+    setAdminSession(ctx.from.id, {
+      ...session,
+      step: 'add_product_ask_note',
+      data: { ...session.data, stock },
+    });
+
+    await ctx.reply(
+      `📝 <b>Perlu catatan ketika order?</b>\n\n` +
+      `Contoh: "Silahkan masukan email untuk pengaktifan pro."`,
+      {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              Markup.button.callback('✅ Ya', 'adm_prod_note_yes'),
+              Markup.button.callback('❌ Tidak', 'adm_prod_note_no'),
+            ],
+          ],
+        },
+      }
+    );
+    return true;
+  }
+
+  if (session.step === 'add_product_note_prompt') {
+    const orderNotePrompt = text.trim();
+    const { name, variant, categoryId, description, price, stock } = session.data;
+    clearAdminSession(ctx.from.id);
+
+    const product = await productService.createProduct({
+      name,
+      variant: variant || null,
+      categoryId,
+      description,
+      price,
+      stock,
+      sellerId: null,
+      requireNote: true,
+      orderNotePrompt,
+    });
+
+    const displayLabel = productService.getProductDisplayLabel(product);
+    const buttons = [
+      [Markup.button.callback('➕ Tambah Varian Lain untuk Produk Ini', `adm_prod_add_var_${product.id}`)],
+      [Markup.button.callback('🖼️ Upload Foto Produk', `adm_prod_photo_${product.id}`)],
+      [Markup.button.callback('📦 Lihat Semua Produk', 'admin_products')],
+    ];
+
+    await ctx.reply(
+      `✅ <b>Produk berhasil ditambahkan!</b>\n\n` +
+      `<b>ID:</b> ${product.id}\n` +
+      `<b>Produk:</b> ${escapeHtml(product.name)}\n` +
+      `<b>Varian:</b> ${escapeHtml(displayLabel)}\n` +
+      `<b>Harga:</b> ${formatCurrency(product.price)}\n` +
+      `<b>Stok:</b> ${product.stock}\n` +
+      `<b>Catatan Order:</b> ✅ Aktif`,
+      { parse_mode: 'HTML', reply_markup: { inline_keyboard: buttons } }
+    );
+    return true;
+  }
+
+  // ── Add Variant Flow ──
+  if (session.step === 'add_variant_name') {
+    const variantVal = (text.trim() === '-' || text.trim() === '') ? null : text.trim();
+    setAdminSession(ctx.from.id, {
+      ...session,
+      step: 'add_variant_price',
+      data: { ...session.data, variant: variantVal },
+    });
+    await ctx.reply(`💰 Masukkan <b>harga</b> untuk varian "<b>${escapeHtml(text)}</b>" (angka saja):`, { parse_mode: 'HTML' });
+    return true;
+  }
+
+  if (session.step === 'add_variant_price') {
+    const price = parseInt(text.replace(/\D/g, ''), 10);
+    if (isNaN(price) || price <= 0) {
+      await ctx.reply('❌ Harga harus berupa angka positif.', { parse_mode: 'HTML' });
+      return true;
+    }
+    setAdminSession(ctx.from.id, {
+      ...session,
+      step: 'add_variant_stock',
+      data: { ...session.data, price },
+    });
+    await ctx.reply('📦 Masukkan <b>stok awal</b> untuk varian ini (angka):', { parse_mode: 'HTML' });
+    return true;
+  }
+
+  if (session.step === 'add_variant_stock') {
+    const stock = parseInt(text, 10);
+    if (isNaN(stock) || stock < 0) {
+      await ctx.reply('❌ Stok harus berupa angka >= 0.', { parse_mode: 'HTML' });
+      return true;
+    }
+
+    // Save stock then ask about order note
+    setAdminSession(ctx.from.id, {
+      ...session,
+      step: 'add_variant_ask_note',
+      data: { ...session.data, stock },
+    });
+
+    await ctx.reply(
+      `📝 <b>Perlu catatan ketika order?</b>\n\n` +
+      `Contoh: "Silahkan masukan email untuk pengaktifan pro."`,
+      {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              Markup.button.callback('✅ Ya', 'adm_var_note_yes'),
+              Markup.button.callback('❌ Tidak', 'adm_var_note_no'),
+            ],
+          ],
+        },
+      }
+    );
+    return true;
+  }
+
+  if (session.step === 'add_variant_note_prompt') {
+    const orderNotePrompt = text.trim();
+    const { parentProduct, variant, price, stock } = session.data;
+    clearAdminSession(ctx.from.id);
+
+    const newProduct = await productService.createProduct({
+      name: parentProduct.name,
+      variant,
+      categoryId: parentProduct.categoryId,
+      description: parentProduct.description,
+      price,
+      stock,
+      sellerId: parentProduct.sellerId || null,
+      image: parentProduct.image || null,
+      requireNote: true,
+      orderNotePrompt,
+    });
+
+    const displayLabel = productService.getProductDisplayLabel(newProduct);
+    const buttons = [
+      [Markup.button.callback('➕ Tambah Varian Lain Lagi', `adm_prod_add_var_${parentProduct.id}`)],
+      [Markup.button.callback('✏️ Edit Varian Ini', `adm_prod_edit_${newProduct.id}`)],
+      [Markup.button.callback('📦 Lihat Semua Produk', 'admin_products')],
+    ];
+
+    await ctx.reply(
+      `✅ <b>Varian baru berhasil ditambahkan!</b>\n\n` +
+      `<b>ID:</b> ${newProduct.id}\n` +
+      `<b>Produk:</b> ${escapeHtml(newProduct.name)}\n` +
+      `<b>Varian:</b> ${escapeHtml(displayLabel)}\n` +
+      `<b>Harga:</b> ${formatCurrency(newProduct.price)}\n` +
+      `<b>Stok:</b> ${newProduct.stock}\n` +
+      `<b>Catatan Order:</b> ✅ Aktif`,
+      { parse_mode: 'HTML', reply_markup: { inline_keyboard: buttons } }
+    );
+    return true;
+  }
+
+
+
+  // ── Category CRUD Text Inputs ──
+  if (session.step === 'add_cat_name') {
+    setAdminSession(ctx.from.id, { ...session, step: 'add_cat_emoji', data: { name: text } });
+    await ctx.reply('🎨 Masukkan <b>emoji</b> untuk kategori:', { parse_mode: 'HTML' });
+    return true;
+  }
+
+  if (session.step === 'add_cat_emoji') {
+    const { name } = session.data;
+    clearAdminSession(ctx.from.id);
+
+    const category = await productService.createCategory({
+      name,
+      emoji: text.trim(),
+      description: '',
+    });
+
+    await ctx.reply(
+      `✅ <b>Kategori berhasil ditambahkan!</b>\n\n` +
+      `<b>ID:</b> ${category.id}\n` +
+      `<b>Nama:</b> ${category.emoji} ${escapeHtml(category.name)}`,
+      { parse_mode: 'HTML' }
+    );
+    return true;
+  }
+
+  if (session.step === 'edit_cat_name') {
+    await productService.updateCategory(session.data.catId, { name: text });
+    clearAdminSession(ctx.from.id);
+    await ctx.reply('✅ Nama kategori berhasil diupdate!');
+    await showAdminCategories(ctx);
+    return true;
+  }
+
+  if (session.step === 'edit_cat_emoji') {
+    await productService.updateCategory(session.data.catId, { emoji: text.trim() });
+    clearAdminSession(ctx.from.id);
+    await ctx.reply('✅ Emoji kategori berhasil diupdate!');
+    await showAdminCategories(ctx);
+    return true;
+  }
+
+  // ── Add Seller Flow ──
+  if (session.step === 'add_seller_tgid') {
+    const telegramId = parseInt(text.trim(), 10);
+    if (isNaN(telegramId)) {
+      await ctx.reply('❌ Masukkan Telegram ID yang valid (angka).', { parse_mode: 'HTML' });
+      return true;
+    }
+
+    clearAdminSession(ctx.from.id);
+
+    const user = userService.findByTelegramId(telegramId);
+    if (!user) {
+      await ctx.reply(
+        `❌ User dengan Telegram ID <code>${telegramId}</code> belum terdaftar.\n` +
+        `User harus mengirim /start ke bot terlebih dahulu.`,
+        { parse_mode: 'HTML' }
+      );
+      return true;
+    }
+
+    await userService.updateRole(user.id, 'seller');
+    await ctx.reply(
+      `✅ <b>Seller berhasil ditambahkan!</b>\n\n` +
+      `<b>User:</b> ${escapeHtml(user.firstName || user.username)}\n` +
+      `<b>ID:</b> ${user.id}\n` +
+      `<b>TG ID:</b> <code>${user.telegramId}</code>`,
+      { parse_mode: 'HTML' }
+    );
+    return true;
+  }
+
+  // ── Add Admin Flow ──
+  if (session.step === 'add_admin_tgid') {
+    const telegramId = parseInt(text.trim(), 10);
+    if (isNaN(telegramId)) {
+      await ctx.reply('❌ Masukkan Telegram ID yang valid (angka).', { parse_mode: 'HTML' });
+      return true;
+    }
+
+    clearAdminSession(ctx.from.id);
+
+    if (config.ADMIN_IDS.includes(telegramId)) {
+      await ctx.reply(
+        `ℹ️ User <code>${telegramId}</code> sudah menjadi Super Admin (dari .env).`,
+        { parse_mode: 'HTML' }
+      );
+      return true;
+    }
+
+    const user = userService.findByTelegramId(telegramId);
+    if (!user) {
+      await ctx.reply(
+        `❌ User dengan Telegram ID <code>${telegramId}</code> belum terdaftar.\n` +
+        `User harus mengirim /start ke bot terlebih dahulu.`,
+        { parse_mode: 'HTML' }
+      );
+      return true;
+    }
+
+    await userService.updateRole(user.id, 'admin');
+    logger.info(`Admin ${ctx.from.id} promoted TG ${telegramId} to admin via UI`);
+    await ctx.reply(
+      `✅ <b>Admin berhasil ditambahkan!</b>\n\n` +
+      `<b>User:</b> ${escapeHtml(user.firstName || user.username || '-')}\n` +
+      `<b>ID:</b> ${user.id}\n` +
+      `<b>TG ID:</b> <code>${user.telegramId}</code>\n` +
+      `<b>Role:</b> ⚙️ Admin`,
+      { parse_mode: 'HTML' }
+    );
+    return true;
+  }
+
+  // ── Edit Product Text Inputs ──
+  if (session.step === 'edit_product_field') {
+    const product = productService.getProductById(session.data.productId);
+    if (!product) {
+      clearAdminSession(ctx.from.id);
+      await ctx.reply('❌ Produk tidak ditemukan.', { parse_mode: 'HTML' });
+      return true;
+    }
+
+    const field = session.data.field;
+    let value = text;
+
+    if (field === 'price') {
+      value = parseInt(text.replace(/\D/g, ''), 10);
+    } else if (field === 'stock') {
+      value = parseInt(text, 10);
+    } else if (['duration', 'variant'].includes(field) && text.trim() === '-') {
+      value = null;
+    }
+
+    clearAdminSession(ctx.from.id);
+    await productService.updateProduct(session.data.productId, { [field]: value });
+    await ctx.reply(`✅ Produk <b>${escapeHtml(product.name)}</b> field <b>${field}</b> berhasil diupdate.`, { parse_mode: 'HTML' });
+    return true;
+
+  }
+
+  return false;
+}
+
+/**
+ * Show Admin Backup & Restore Menu
+ */
+async function showAdminBackupRestoreMenu(ctx) {
+  if (!requireAdmin(ctx)) return;
+
+  const text =
+    `💾 <b>KELOLA BACKUP & RESTORE DATABASE</b>\n` +
+    `━━━━━━━━━━━━━━━━━━━\n\n` +
+    `Pilih aksi kelola database di bawah ini:\n` +
+    `• <b>Download Backup:</b> Bot akan mengirimkan file <code>db.json</code> terbaru.\n` +
+    `• <b>Restore Database:</b> Upload file <code>.json</code> backup untuk memulihkan seluruh data toko.`;
+
+  const buttons = [
+    [Markup.button.callback('📥 Download Backup Database (db.json)', 'adm_db_backup')],
+    [Markup.button.callback('📤 Restore Database dari File', 'adm_db_restore')],
+    navRow('admin_panel'),
+  ];
+
+  return safeEditOrReply(ctx, text, { reply_markup: { inline_keyboard: buttons } });
+}
+
+/**
+ * Handle document uploads (Database JSON Restore)
+ */
+async function handleAdminDocument(ctx) {
+  if (!userService.isAdmin(ctx.from.id)) return false;
+
+  const session = getAdminSession(ctx.from.id);
+  if (!session || session.step !== 'restore_database') return false;
+
+  const doc = ctx.message.document;
+  if (!doc) return false;
+
+  if (!doc.file_name || !doc.file_name.toLowerCase().endsWith('.json')) {
+    await ctx.reply('❌ File yang dikirim harus berformat <b>.json</b> (contoh: db.json atau db_backup_*.json).', { parse_mode: 'HTML' });
+    return true;
+  }
+
+  try {
+    const fileLink = await ctx.telegram.getFileLink(doc.file_id);
+    const fetch = (await import('node-fetch')).default || globalThis.fetch;
+    const res = await fetch(fileLink.href);
+    const text = await res.text();
+
+    const parsed = JSON.parse(text);
+
+    if (typeof parsed !== 'object' || parsed === null) {
+      throw new Error('Isi file JSON tidak valid.');
+    }
+
+    await database.restoreDB(parsed);
+    clearAdminSession(ctx.from.id);
+
+    const prodCount = Array.isArray(parsed.products) ? parsed.products.length : 0;
+    const userCount = Array.isArray(parsed.users) ? parsed.users.length : 0;
+    const orderCount = Array.isArray(parsed.orders) ? parsed.orders.length : 0;
+
+    await ctx.reply(
+      `✅ <b>DATABASE BERHASIL DI-RESTORE!</b>\n\n` +
+      `📊 <b>Ringkasan Data Terpulihkan:</b>\n` +
+      `• Produk: ${prodCount}\n` +
+      `• User: ${userCount}\n` +
+      `• Order: ${orderCount}\n\n` +
+      `<i>Database aman terupdate.</i>`,
+      { parse_mode: 'HTML' }
+    );
+
+    await showAdminPanel(ctx);
+    return true;
+  } catch (err) {
+    logger.error('Failed to restore database:', err.message);
+    await ctx.reply(`❌ <b>Gagal memulihkan database:</b> ${escapeHtml(err.message)}`, { parse_mode: 'HTML' });
+    return true;
+  }
+}
+
+function register(bot) {
+  bot.command('admin', async (ctx) => {
+    await showAdminPanel(ctx);
+  });
+
+  bot.action('admin_panel', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await showAdminPanel(ctx);
+  });
+
+  // ── Backup & Restore Actions ──
+  bot.action('admin_backup_restore', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await showAdminBackupRestoreMenu(ctx);
+  });
+
+  bot.action('adm_db_backup', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+
+    if (!fs.existsSync(database.DB_PATH)) {
+      await ctx.reply('❌ File database db.json tidak ditemukan.');
+      return;
+    }
+
+    const d = new Date();
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const filename = `db_backup_${dateStr}.json`;
+
+    await ctx.replyWithDocument(
+      { source: database.DB_PATH, filename },
+      { caption: '💾 <b>Backup database db.json berhasil didownload!</b>', parse_mode: 'HTML' }
+    );
+  });
+
+  bot.action('adm_db_restore', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+
+    setAdminSession(ctx.from.id, { step: 'restore_database', data: {} });
+    await ctx.reply(
+      `📤 <b>RESTORE DATABASE</b>\n\n` +
+      `Silakan <b>kirimkan file JSON backup (db.json atau file .json)</b> ke chat bot ini.\n\n` +
+      `<i>⚠️ Peringatan: Restore akan menimpa data produk, user, dan order saat ini dengan data dari file backup!</i>`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
+
+  // ── Shop Settings Actions ──
+  bot.action('admin_settings', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await showShopSettings(ctx);
+  });
+
+  bot.action('adm_pakasir_config', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await showShopSettings(ctx);
+  });
+
+  bot.action('adm_set_pakasir_slug', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+    setAdminSession(ctx.from.id, { step: 'edit_pakasir_slug' });
+    await ctx.reply(
+      '💳 Masukkan <b>Pakasir Project Slug</b> baru:\n\n' +
+      `Current Slug: <code>${escapeHtml(pakasirService.getSlug())}</code>`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
+  bot.action('adm_set_pakasir_key', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+    setAdminSession(ctx.from.id, { step: 'edit_pakasir_key' });
+    await ctx.reply(
+      '🔑 Masukkan <b>Pakasir API Key</b> baru:\n\n' +
+      `Current Key: <code>${escapeHtml(pakasirService.getApiKey())}</code>`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
+  // ── Product Image Upload Action ──
+  bot.action(/^adm_prod_photo_(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+    const productId = ctx.match[1];
+    setAdminSession(ctx.from.id, { step: 'upload_product_photo', data: { productId } });
+    await ctx.reply(`🖼️ Silakan <b>kirim gambar/foto produk</b> untuk ${productId} di chat ini:`, { parse_mode: 'HTML' });
+  });
+
+  // ── Products Actions ──
+  bot.action('admin_products', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await showAdminProducts(ctx, 0);
+  });
+
+  bot.action(/^adm_prod_page_(\d+)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await showAdminProducts(ctx, parseInt(ctx.match[1], 10));
+  });
+
+  bot.action('adm_prod_add', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+    setAdminSession(ctx.from.id, { step: 'add_product_name', data: {} });
+    await ctx.reply('📦 Masukkan <b>nama produk</b>:', { parse_mode: 'HTML' });
+  });
+
+  // Button Category Selection when adding product
+  bot.action(/^adm_prod_sel_cat_(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+    const catId = ctx.match[1];
+    const session = getAdminSession(ctx.from.id);
+    if (!session || session.step !== 'add_product_category') return;
+
+    setAdminSession(ctx.from.id, {
+      ...session,
+      step: 'add_product_desc',
+      data: { ...session.data, categoryId: catId },
+    });
+    await ctx.reply('📝 Masukkan <b>deskripsi</b> produk:', { parse_mode: 'HTML' });
+  });
+
+  bot.action('adm_prod_skip_variant', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+    const session = getAdminSession(ctx.from.id);
+    if (!session || session.step !== 'add_product_variant') return;
+
+    setAdminSession(ctx.from.id, {
+      ...session,
+      step: 'add_product_price',
+      data: { ...session.data, variant: null },
+    });
+    await ctx.reply('💰 Masukkan <b>harga</b> (angka saja):', { parse_mode: 'HTML' });
+  });
+
+  bot.action(/^adm_prod_add_var_(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+    const productId = ctx.match[1];
+    const product = productService.getProductById(productId);
+    if (!product) return;
+
+    setAdminSession(ctx.from.id, {
+      step: 'add_variant_name',
+      data: { parentProduct: product },
+    });
+
+    await ctx.reply(
+      `🏷️ Masukkan <b>nama varian baru</b> untuk produk <b>${escapeHtml(product.name)}</b> (contoh: "1 Bulan", "2 Bulan", "Private"):`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
+  bot.action(/^adm_grp_edit_(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+    const productName = decodeURIComponent(ctx.match[1]);
+    await showAdminGroupVariants(ctx, productName);
+  });
+
+  bot.action(/^adm_prod_edit_(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+    const productId = ctx.match[1];
+    const product = productService.getProductById(productId);
+    if (!product) return;
+
+    let backCb = 'admin_products';
+    if (product.name) {
+      const groupVariants = productService.getProductsByNameAll(product.name);
+      if (groupVariants.length > 1 || (groupVariants.length === 1 && groupVariants[0].variant)) {
+        backCb = `adm_grp_edit_${encodeURIComponent(product.name)}`;
+      }
+    }
+
+    const text =
+      `✏️ <b>EDIT PRODUK ${product.id}</b>\n\n` +
+      `<b>Nama:</b> ${escapeHtml(product.name)}\n` +
+      `<b>Varian:</b> ${escapeHtml(product.variant || '-')}\n` +
+      `<b>Harga:</b> ${formatCurrency(product.price)}\n` +
+      `<b>Stok:</b> ${product.stock}\n` +
+      `<b>Status:</b> ${formatProductStatus(product.status)}\n\n` +
+      `Pilih field yang ingin diedit:`;
+
+    const buttons = [
+      [
+        Markup.button.callback('📝 Nama', `adm_prod_ef_${productId}_name`),
+        Markup.button.callback('🏷️ Varian', `adm_prod_ef_${productId}_variant`),
+      ],
+      [
+        Markup.button.callback('💰 Harga', `adm_prod_ef_${productId}_price`),
+        Markup.button.callback('📦 Stok', `adm_prod_ef_${productId}_stock`),
+      ],
+      [Markup.button.callback('➕ Tambah Varian Baru', `adm_prod_add_var_${productId}`)],
+      [Markup.button.callback('📋 Deskripsi', `adm_prod_ef_${productId}_description`)],
+      [
+        Markup.button.callback('✅ Aktif', `adm_prod_st_${productId}_active`),
+        Markup.button.callback('⛔ Nonaktif', `adm_prod_st_${productId}_inactive`),
+      ],
+      [Markup.button.callback('🖼️ Upload/Ubah Foto', `adm_prod_photo_${productId}`)],
+      navRow(backCb),
+    ];
+
+    await ctx.editMessageText(text, {
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: buttons },
+    });
+  });
+
+
+
+  bot.action(/^adm_prod_ef_(.+)_(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+    const productId = ctx.match[1];
+    const field = ctx.match[2];
+    setAdminSession(ctx.from.id, { step: 'edit_product_field', data: { productId, field } });
+    await ctx.reply(`✏️ Masukkan <b>${field}</b> baru (atau ketik "-" untuk mengosongkan):`, { parse_mode: 'HTML' });
+  });
+
+
+  bot.action(/^adm_prod_st_(.+)_(active|inactive)$/, async (ctx) => {
+    if (!requireAdmin(ctx)) return;
+    const productId = ctx.match[1];
+    const status = ctx.match[2];
+    await productService.updateProduct(productId, { status });
+    await ctx.answerCbQuery(`Status diubah ke ${status}`);
+    await showAdminProducts(ctx, 0);
+  });
+
+  bot.action(/^adm_prod_del_(.+)$/, async (ctx) => {
+    if (!requireAdmin(ctx)) return;
+    const productId = ctx.match[1];
+    await productService.deleteProduct(productId);
+    await ctx.answerCbQuery('🗑️ Produk dipindahkan ke daftar Nonaktif.');
+    await showAdminProducts(ctx, 0);
+  });
+
+  bot.action('adm_prod_inactive', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await showAdminInactiveProducts(ctx, 0);
+  });
+
+  bot.action(/^adm_prod_inactive_page_(\d+)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    const page = parseInt(ctx.match[1], 10);
+    await showAdminInactiveProducts(ctx, page);
+  });
+
+  bot.action(/^adm_prod_restore_(.+)$/, async (ctx) => {
+    if (!requireAdmin(ctx)) return;
+    const productId = ctx.match[1];
+    await productService.updateProduct(productId, { status: 'active' });
+    await ctx.answerCbQuery('✅ Produk berhasil diaktifkan kembali!');
+    await showAdminInactiveProducts(ctx, 0);
+  });
+
+  // ── Category Actions & CRUD ──
+  bot.action('admin_categories', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await showAdminCategories(ctx);
+  });
+
+  bot.action('adm_cat_add', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+    setAdminSession(ctx.from.id, { step: 'add_cat_name', data: {} });
+    await ctx.reply('🏷 Masukkan <b>nama kategori baru</b>:', { parse_mode: 'HTML' });
+  });
+
+  bot.action(/^adm_cat_edit_(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+    const catId = ctx.match[1];
+    const category = productService.getCategoryById(catId);
+    if (!category) return;
+
+    const text =
+      `✏️ <b>EDIT KATEGORI</b>\n\n` +
+      `<b>ID:</b> ${category.id}\n` +
+      `<b>Nama:</b> ${category.emoji} ${escapeHtml(category.name)}\n\n` +
+      `Pilih field yang ingin diubah:`;
+
+    const buttons = [
+      [Markup.button.callback('📝 Nama Kategori', `adm_cat_ef_${catId}_name`)],
+      [Markup.button.callback('🎨 Emoji Kategori', `adm_cat_ef_${catId}_emoji`)],
+      navRow('admin_categories'),
+    ];
+
+    await ctx.editMessageText(text, {
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: buttons },
+    });
+  });
+
+  bot.action(/^adm_cat_ef_(.+)_(name|emoji)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+    const catId = ctx.match[1];
+    const field = ctx.match[2];
+    setAdminSession(ctx.from.id, { step: `edit_cat_${field}`, data: { catId } });
+    await ctx.reply(`✏️ Masukkan <b>${field}</b> baru kategori:`, { parse_mode: 'HTML' });
+  });
+
+  bot.action(/^adm_cat_toggle_(.+)$/, async (ctx) => {
+    if (!requireAdmin(ctx)) return;
+    const catId = ctx.match[1];
+    const category = productService.getCategoryById(catId);
+    if (category) {
+      const newStatus = category.status === 'active' ? 'inactive' : 'active';
+      await productService.updateCategory(catId, { status: newStatus });
+      await ctx.answerCbQuery(`Kategori diubah ke ${newStatus}`);
+      await showAdminCategories(ctx);
+    }
+  });
+
+  // ── Orders Actions & Quick Payment Status ──
+  bot.action('admin_orders', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await showAdminOrders(ctx, 0);
+  });
+
+  bot.action(/^adm_orders_page_(\d+)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await showAdminOrders(ctx, parseInt(ctx.match[1], 10));
+  });
+
+  bot.action(/^adm_order_(ORD-\d+)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await showAdminOrderDetail(ctx, ctx.match[1]);
+  });
+
+  // Quick Payment status action
+  bot.action(/^adm_quick_pay_(ORD-\d+)_(paid|cancelled)$/, async (ctx) => {
+    if (!requireAdmin(ctx)) return;
+    const orderId = ctx.match[1];
+    const targetStatus = ctx.match[2];
+
+    const result = await orderService.updateOrderStatus(orderId, targetStatus);
+    if (!result.success) {
+      await ctx.answerCbQuery(result.error);
+      return;
+    }
+
+    const label = targetStatus === 'paid' ? '✅ Payment Berhasil' : '❌ Payment Gagal / Dibatalkan';
+    await ctx.answerCbQuery(`Status payment: ${label}`);
+
+    const order = orderService.getOrderById(orderId);
+    if (order) {
+      // Delete order notification messages sent to other admins
+      const notifMsgs = orderService.getAdminNotificationMessages(orderId);
+      if (notifMsgs && notifMsgs.length > 0) {
+        await messageService.deleteAdminNotificationMessages({ telegram: ctx.telegram }, notifMsgs, ctx.from.id);
+        await orderService.clearAdminNotificationMessages(orderId);
+      }
+
+      const notifText =
+        `🔔 <b>STATUS PAYMENT DIUPDATE</b>\n\n` +
+        `Order #${orderId}\n` +
+        `Status: ${formatOrderStatus(targetStatus)}`;
+      await messageService.notifyBuyer({ telegram: ctx.telegram }, order.buyerId, notifText);
+    }
+
+    await showAdminOrderDetail(ctx, orderId);
+  });
+
+  bot.action(/^adm_order_status_(ORD-\d+)_(.+)$/, async (ctx) => {
+    if (!requireAdmin(ctx)) return;
+    const orderId = ctx.match[1];
+    const newStatus = ctx.match[2];
+
+    const result = await orderService.updateOrderStatus(orderId, newStatus);
+    if (!result.success) {
+      await ctx.answerCbQuery(result.error);
+      return;
+    }
+
+    await ctx.answerCbQuery(`Status diubah ke ${newStatus}`);
+    await showAdminOrderDetail(ctx, orderId);
+  });
+
+  // ── Tickets ──
+  bot.action('admin_tickets', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await showAdminTickets(ctx, 'all', 0);
+  });
+
+  bot.action(/^adm_tkt_filter_(all|unread|read|active)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    const filter = ctx.match[1];
+    await showAdminTickets(ctx, filter, 0);
+  });
+
+  bot.action(/^adm_tickets_page_(\d+)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await showAdminTickets(ctx, 'all', parseInt(ctx.match[1], 10));
+  });
+
+  // ── Product Note Callbacks ──
+  bot.action('adm_prod_note_yes', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+    const session = getAdminSession(ctx.from.id);
+    if (!session || session.step !== 'add_product_ask_note') return;
+    setAdminSession(ctx.from.id, { ...session, step: 'add_product_note_prompt' });
+    await ctx.reply(
+      `✏️ Silahkan masukan <b>teks catatan</b> yang akan ditampilkan ke pembeli saat order:\n\n` +
+      `<i>Contoh: "Silahkan masukan email untuk pengaktifan pro. Jika status order sudah selesai cek kembali pada email yang sudah dikirim oleh admin. Lalu silahkan terima"</i>`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
+  bot.action('adm_prod_note_no', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+    const session = getAdminSession(ctx.from.id);
+    if (!session || session.step !== 'add_product_ask_note') return;
+    const { name, variant, categoryId, description, price, stock } = session.data;
+    clearAdminSession(ctx.from.id);
+
+    const product = await productService.createProduct({
+      name,
+      variant: variant || null,
+      categoryId,
+      description,
+      price,
+      stock,
+      sellerId: null,
+      requireNote: false,
+      orderNotePrompt: null,
+    });
+
+    const displayLabel = productService.getProductDisplayLabel(product);
+    const buttons = [
+      [Markup.button.callback('➕ Tambah Varian Lain untuk Produk Ini', `adm_prod_add_var_${product.id}`)],
+      [Markup.button.callback('🖼️ Upload Foto Produk', `adm_prod_photo_${product.id}`)],
+      [Markup.button.callback('📦 Lihat Semua Produk', 'admin_products')],
+    ];
+
+    await ctx.reply(
+      `✅ <b>Produk berhasil ditambahkan!</b>\n\n` +
+      `<b>ID:</b> ${product.id}\n` +
+      `<b>Produk:</b> ${escapeHtml(product.name)}\n` +
+      `<b>Varian:</b> ${escapeHtml(displayLabel)}\n` +
+      `<b>Harga:</b> ${formatCurrency(product.price)}\n` +
+      `<b>Stok:</b> ${product.stock}`,
+      { parse_mode: 'HTML', reply_markup: { inline_keyboard: buttons } }
+    );
+  });
+
+  // ── Variant Note Callbacks ──
+  bot.action('adm_var_note_yes', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+    const session = getAdminSession(ctx.from.id);
+    if (!session || session.step !== 'add_variant_ask_note') return;
+    setAdminSession(ctx.from.id, { ...session, step: 'add_variant_note_prompt' });
+    await ctx.reply(
+      `✏️ Silahkan masukan <b>teks catatan</b> yang akan ditampilkan ke pembeli saat order:`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
+  bot.action('adm_var_note_no', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+    const session = getAdminSession(ctx.from.id);
+    if (!session || session.step !== 'add_variant_ask_note') return;
+    const { parentProduct, variant, price, stock } = session.data;
+    clearAdminSession(ctx.from.id);
+
+    const newProduct = await productService.createProduct({
+      name: parentProduct.name,
+      variant,
+      categoryId: parentProduct.categoryId,
+      description: parentProduct.description,
+      price,
+      stock,
+      sellerId: parentProduct.sellerId || null,
+      image: parentProduct.image || null,
+      requireNote: false,
+      orderNotePrompt: null,
+    });
+
+    const displayLabel = productService.getProductDisplayLabel(newProduct);
+    const buttons = [
+      [Markup.button.callback('➕ Tambah Varian Lain Lagi', `adm_prod_add_var_${parentProduct.id}`)],
+      [Markup.button.callback('✏️ Edit Varian Ini', `adm_prod_edit_${newProduct.id}`)],
+      [Markup.button.callback('📦 Lihat Semua Produk', 'admin_products')],
+    ];
+
+    await ctx.reply(
+      `✅ <b>Varian baru berhasil ditambahkan!</b>\n\n` +
+      `<b>ID:</b> ${newProduct.id}\n` +
+      `<b>Produk:</b> ${escapeHtml(newProduct.name)}\n` +
+      `<b>Varian:</b> ${escapeHtml(displayLabel)}\n` +
+      `<b>Harga:</b> ${formatCurrency(newProduct.price)}\n` +
+      `<b>Stok:</b> ${newProduct.stock}`,
+      { parse_mode: 'HTML', reply_markup: { inline_keyboard: buttons } }
+    );
+  });
+
+  // ── Users ──
+  bot.action('admin_users', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await showAdminUsers(ctx, 0);
+  });
+
+  bot.action(/^adm_users_page_(\d+)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await showAdminUsers(ctx, parseInt(ctx.match[1], 10));
+  });
+
+  // ── Sellers ──
+  bot.action('admin_sellers', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await showAdminSellers(ctx);
+  });
+
+  bot.action('adm_seller_add', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+    setAdminSession(ctx.from.id, { step: 'add_seller_tgid', data: {} });
+    await ctx.reply(
+      '👨‍💼 Masukkan <b>Telegram ID</b> user yang ingin dijadikan seller:\n\n' +
+      '<i>User harus sudah mengirim /start ke bot.</i>',
+      { parse_mode: 'HTML' }
+    );
+  });
+
+  // ── Statistics ──
+  bot.action('admin_stats', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await showAdminStats(ctx);
+  });
+
+  // ── Admin Management ──
+
+  // Kelola Admin page
+  bot.action('adm_manage_admins', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await showAdminManagement(ctx);
+  });
+
+  // User detail page
+  bot.action(/^adm_user_detail_(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await showUserDetail(ctx, ctx.match[1]);
+  });
+
+  // Role set: promote/demote by user ID
+  bot.action(/^adm_role_set_(.+)_(admin|seller|buyer)$/, async (ctx) => {
+    if (!requireAdmin(ctx)) return;
+    const userId = ctx.match[1];
+    const newRole = ctx.match[2];
+
+    const user = userService.getUserById(userId);
+    if (!user) {
+      await ctx.answerCbQuery('User tidak ditemukan.');
+      return;
+    }
+
+    // Protect super admin from demotion via bot
+    if (config.ADMIN_IDS.includes(user.telegramId) && newRole !== 'admin') {
+      await ctx.answerCbQuery('⚠️ Super Admin (.env) tidak bisa diubah via bot.');
+      return;
+    }
+
+    await userService.updateRole(userId, newRole);
+    const roleLabel = { admin: '⚙️ Admin', seller: '👨‍💼 Seller', buyer: '👤 Buyer' }[newRole];
+    await ctx.answerCbQuery(`✅ Role diubah ke ${roleLabel}`);
+    logger.info(`Admin ${ctx.from.id} set user ${userId} role to ${newRole}`);
+    await showUserDetail(ctx, userId);
+  });
+
+  // Revoke admin by TG ID (from manage admins page)
+  bot.action(/^adm_admin_revoke_(\d+)$/, async (ctx) => {
+    if (!requireAdmin(ctx)) return;
+    const telegramId = parseInt(ctx.match[1], 10);
+
+    if (config.ADMIN_IDS.includes(telegramId)) {
+      await ctx.answerCbQuery('⚠️ Super Admin (.env) tidak bisa dicabut.');
+      return;
+    }
+
+    const user = userService.findByTelegramId(telegramId);
+    if (!user) {
+      await ctx.answerCbQuery('User tidak ditemukan.');
+      return;
+    }
+
+    await userService.updateRole(user.id, 'buyer');
+    await ctx.answerCbQuery(`✅ Admin ${user.firstName || user.username} berhasil dicabut.`);
+    logger.info(`Admin ${ctx.from.id} revoked admin from TG ${telegramId}`);
+    await showAdminManagement(ctx);
+  });
+
+  // Add admin prompt
+  bot.action('adm_admin_add', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+    setAdminSession(ctx.from.id, { step: 'add_admin_tgid' });
+    await ctx.reply(
+      '⚙️ Masukkan <b>Telegram ID</b> user yang ingin dijadikan admin:\n\n' +
+      '<i>User harus sudah mengirim /start ke bot terlebih dahulu.</i>',
+      { parse_mode: 'HTML' }
+    );
+  });
+
+  // /setadmin command (admin only)
+  bot.command('setadmin', async (ctx) => {
+    if (!requireAdmin(ctx)) {
+      await ctx.reply('⛔ Akses ditolak.');
+      return;
+    }
+
+    const args = ctx.message.text.split(' ').slice(1);
+    if (args.length === 0) {
+      await ctx.reply(
+        '⚙️ <b>Set Admin</b>\n\n' +
+        'Cara penggunaan:\n' +
+        '<code>/setadmin &lt;telegram_id&gt;</code>\n\n' +
+        'Contoh: <code>/setadmin 123456789</code>\n\n' +
+        'Untuk mencabut admin:\n' +
+        '<code>/removeadmin &lt;telegram_id&gt;</code>',
+        { parse_mode: 'HTML' }
+      );
+      return;
+    }
+
+    const telegramId = parseInt(args[0], 10);
+    if (isNaN(telegramId)) {
+      await ctx.reply('❌ Telegram ID harus berupa angka.', { parse_mode: 'HTML' });
+      return;
+    }
+
+    const user = userService.findByTelegramId(telegramId);
+    if (!user) {
+      await ctx.reply(
+        `❌ User dengan Telegram ID <code>${telegramId}</code> belum terdaftar.\n` +
+        `User harus mengirim /start ke bot terlebih dahulu.`,
+        { parse_mode: 'HTML' }
+      );
+      return;
+    }
+
+    await userService.updateRole(user.id, 'admin');
+    logger.info(`/setadmin: ${ctx.from.id} promoted TG ${telegramId} to admin`);
+    await ctx.reply(
+      `✅ <b>Admin berhasil ditambahkan!</b>\n\n` +
+      `<b>User:</b> ${escapeHtml(user.firstName || user.username || '-')}\n` +
+      `<b>ID:</b> ${user.id}\n` +
+      `<b>TG ID:</b> <code>${user.telegramId}</code>\n` +
+      `<b>Role:</b> ⚙️ Admin`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
+  // /removeadmin command
+  bot.command('removeadmin', async (ctx) => {
+    if (!requireAdmin(ctx)) {
+      await ctx.reply('⛔ Akses ditolak.');
+      return;
+    }
+
+    const args = ctx.message.text.split(' ').slice(1);
+    if (args.length === 0) {
+      await ctx.reply(
+        '⚙️ Cara penggunaan: <code>/removeadmin &lt;telegram_id&gt;</code>',
+        { parse_mode: 'HTML' }
+      );
+      return;
+    }
+
+    const telegramId = parseInt(args[0], 10);
+    if (isNaN(telegramId)) {
+      await ctx.reply('❌ Telegram ID harus berupa angka.', { parse_mode: 'HTML' });
+      return;
+    }
+
+    if (config.ADMIN_IDS.includes(telegramId)) {
+      await ctx.reply('⚠️ <b>Super Admin (dari .env) tidak bisa dicabut via bot.</b>', { parse_mode: 'HTML' });
+      return;
+    }
+
+    const user = userService.findByTelegramId(telegramId);
+    if (!user) {
+      await ctx.reply(
+        `❌ User dengan Telegram ID <code>${telegramId}</code> tidak ditemukan.`,
+        { parse_mode: 'HTML' }
+      );
+      return;
+    }
+
+    if (user.role !== 'admin') {
+      await ctx.reply(
+        `⚠️ User <b>${escapeHtml(user.firstName || user.username)}</b> bukan admin.`,
+        { parse_mode: 'HTML' }
+      );
+      return;
+    }
+
+    await userService.updateRole(user.id, 'buyer');
+    logger.info(`/removeadmin: ${ctx.from.id} revoked admin from TG ${telegramId}`);
+    await ctx.reply(
+      `✅ <b>Admin berhasil dicabut!</b>\n\n` +
+      `<b>User:</b> ${escapeHtml(user.firstName || user.username || '-')}\n` +
+      `<b>ID:</b> ${user.id}\n` +
+      `<b>TG ID:</b> <code>${user.telegramId}</code>\n` +
+      `<b>Role sekarang:</b> 👤 Buyer`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
+  // /pay <nominal> command (Admin Only)
+  bot.command('pay', async (ctx) => {
+    if (!requireAdmin(ctx)) {
+      await ctx.reply('⛔ Akses ditolak. Hanya admin yang dapat menggunakan perintah ini.', { parse_mode: 'HTML' });
+      return;
+    }
+
+    const args = ctx.message.text.split(' ').slice(1);
+    const nominal = parseInt(args[0], 10);
+
+    if (!args[0] || isNaN(nominal) || nominal <= 0) {
+      await ctx.reply(
+        '💳 <b>Tagihan Pembayaran QRIS (Admin Only)</b>\n\n' +
+        'Cara penggunaan:\n' +
+        '<code>/pay &lt;nominal&gt;</code>\n\n' +
+        'Contoh:\n' +
+        '<code>/pay 10000</code>\n' +
+        '<code>/pay 50000</code>',
+        { parse_mode: 'HTML' }
+      );
+      return;
+    }
+
+    const loadingMsg = await ctx.reply(`⏳ Membuat Pakasir QRIS sebesar <b>${formatCurrency(nominal)}</b>...`, { parse_mode: 'HTML' });
+
+    try {
+      const qrisData = await pakasirService.createQris({
+        amount: nominal,
+      });
+
+      let imageBuffer = null;
+      if (qrisData.qr_url) {
+        imageBuffer = await pakasirService.fetchQrImageBuffer(qrisData.qr_url).catch(() => null);
+      }
+
+      // Check if admin is currently in an active ticket session
+      const ticketHandler = require('./ticket');
+      const activeTicketId = ticketHandler.getActiveTicket(ctx.from.id);
+
+      if (activeTicketId) {
+        const ticket = ticketService.getTicketById(activeTicketId);
+        if (ticket && ticket.status !== 'closed') {
+          const buyerUser = userService.getUserById(ticket.buyerId);
+
+          const caption =
+            `💳 <b>TAGIHAN PEMBAYARAN PAKASIR QRIS</b>\n` +
+            `━━━━━━━━━━━━━━━━━━━\n` +
+            `<b>Nominal:</b> ${formatCurrency(nominal)}\n` +
+            `<b>Order ID:</b> <code>${qrisData.order_id}</code>\n` +
+            `<b>Ticket ID:</b> #${ticket.id}\n` +
+            (ticket.orderId ? `<b>Order ID:</b> #${ticket.orderId}\n` : '') +
+            `━━━━━━━━━━━━━━━━━━━\n` +
+            `📱 <i>Silakan scan QRIS di atas menggunakan e-Wallet atau m-Banking Anda.</i>`;
+
+          const extraOptions = {
+            caption,
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: ticket.orderId
+                ? [[Markup.button.callback('🔄 Cek Status Pembayaran', `order_checkpay_${ticket.orderId}`)]]
+                : [],
+            },
+          };
+
+          // Send photo to admin chat
+          if (imageBuffer) {
+            await ctx.replyWithPhoto({ source: imageBuffer }, extraOptions);
+          } else if (qrisData.qr_url) {
+            await ctx.replyWithPhoto(qrisData.qr_url, extraOptions);
+          } else {
+            await ctx.reply(caption, extraOptions);
+          }
+
+          // Send photo to buyer if buyer exists
+          if (buyerUser && buyerUser.telegramId) {
+            if (imageBuffer) {
+              await bot.telegram.sendPhoto(buyerUser.telegramId, { source: imageBuffer }, extraOptions);
+            } else if (qrisData.qr_url) {
+              await bot.telegram.sendPhoto(buyerUser.telegramId, qrisData.qr_url, extraOptions);
+            } else {
+              await bot.telegram.sendMessage(buyerUser.telegramId, caption, extraOptions);
+            }
+          }
+
+          // Log message in ticket history
+          await ticketService.addMessage({
+            ticketId: activeTicketId,
+            senderId: ctx.from.id,
+            senderRole: 'admin',
+            message: `[Tagihan Pakasir QRIS Dikirim: ${formatCurrency(nominal)} (Order: ${qrisData.order_id})]`,
+            messageType: 'qris',
+          });
+
+          // Delete loading message
+          if (loadingMsg && loadingMsg.message_id) {
+            await ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id).catch(() => {});
+          }
+
+          await ctx.reply(
+            `✅ Pakasir QRIS Tagihan <b>${formatCurrency(nominal)}</b> (Order: <code>${qrisData.order_id}</code>) berhasil dikirimkan ke buyer di Ticket <b>#${activeTicketId}</b>!`,
+            { parse_mode: 'HTML' }
+          );
+          logger.info(`Admin ${ctx.from.id} generated Pakasir QRIS ${nominal} for ticket ${activeTicketId}`);
+          return;
+        }
+      }
+
+      // If not in ticket session
+      const caption =
+        `💳 <b>QRIS PEMBAYARAN</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━\n` +
+        `<b>Nominal:</b> ${formatCurrency(nominal)}\n` +
+        `━━━━━━━━━━━━━━━━━━━\n` +
+        `📱 <i>Silakan scan QRIS di atas menggunakan e-Wallet (DANA, OVO, GoPay, ShopeePay) atau m-Banking Anda.</i>`;
+
+      await ctx.replyWithPhoto({ source: imageBuffer }, { caption, parse_mode: 'HTML' });
+
+      if (loadingMsg && loadingMsg.message_id) {
+        await ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id).catch(() => {});
+      }
+
+      logger.info(`Admin ${ctx.from.id} generated QRIS ${nominal}`);
+    } catch (err) {
+      logger.error('Error in /pay command:', err.message);
+      if (loadingMsg && loadingMsg.message_id) {
+        await ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id).catch(() => {});
+      }
+      await ctx.reply(`❌ Gagal membuat QRIS: ${escapeHtml(err.message)}`, { parse_mode: 'HTML' });
+    }
+  });
+}
+
+module.exports = {
+  register,
+  handleAdminInput,
+  handleAdminPhoto,
+  handleAdminDocument,
+  getAdminSession,
+  clearAdminSession,
+};
+
