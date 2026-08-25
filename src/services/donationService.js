@@ -1,38 +1,26 @@
 // ─────────────────────────────────────────────
 // Donation Service
-// Pakasir Payment Integration & Donation Management
+// Arasyarafi Payment Integration & Donation Management
 // ─────────────────────────────────────────────
 const database = require('../database');
-const pakasirService = require('./pakasirService');
+const arasyarafiService = require('./arasyarafiService');
 const { generateId } = require('../utils/id');
 const logger = require('../utils/logger');
 
 /**
- * Generate Pakasir QRIS for Donation
+ * Generate Payment Link for Donation
  * @param {object} param0 { nominal, customerName, telegramId }
  * @returns {Promise<object>}
  */
 async function generateDonationQris({ nominal, customerName = 'Donatur Telegram', telegramId }) {
-  logger.info(`Generating Pakasir QRIS Donasi for Rp ${nominal}...`);
-
   const orderId = 'DON-' + Math.random().toString(36).substring(2, 10).toUpperCase();
-  const qrisData = await pakasirService.createQris({
-    amount: nominal,
-    orderId,
-  });
-
-  let imageBuffer = null;
-  if (qrisData.qr_url) {
-    try {
-      imageBuffer = await pakasirService.fetchQrImageBuffer(qrisData.qr_url);
-    } catch (err) {
-      logger.warn('Failed to download QRIS image buffer:', err.message);
-    }
-  }
+  const paymentUrl = arasyarafiService.getPaymentUrl(orderId, nominal);
 
   return {
-    ...qrisData,
-    imageBuffer,
+    depositId: orderId,
+    order_id: orderId,
+    payment_url: paymentUrl,
+    total_payment: nominal,
   };
 }
 
@@ -59,36 +47,33 @@ async function createDonationRecord({ telegramId, username, name, nominal, refNo
 }
 
 /**
- * Check payment status of a donation via Pakasir API and update DB if success
+ * Check payment status of a donation via arasyarafi API
  * @param {string} refNo
  * @returns {Promise<{success: boolean, status: string, donation?: object, raw?: object}>}
  */
 async function checkDonationPayment(refNo) {
   const donation = database.findOne('donations', { refNo });
-  const nominal = donation ? donation.nominal : 0;
 
   if (donation && donation.status === 'completed') {
     return { success: true, status: 'completed', donation };
   }
 
-  const checkRes = await pakasirService.checkStatus(refNo, nominal);
+  const res = await arasyarafiService.checkPaymentStatus(refNo);
 
-  if (checkRes && checkRes.status === 'completed') {
+  if (res.isPaid) {
     let updated = donation;
     if (donation) {
       updated = await database.update('donations', { id: donation.id }, {
         status: 'completed',
-        payor: checkRes.customer_name || checkRes.payor || null,
-        settledAt: checkRes.completed_at || new Date().toISOString(),
+        settledAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       });
     }
-    logger.info(`Donation ${refNo} status updated to completed via Pakasir!`);
-    return { success: true, status: 'completed', donation: updated, raw: checkRes };
+    logger.info(`Donation ${refNo} status updated to completed via Arasyarafi Payment!`);
+    return { success: true, status: 'completed', donation: updated, raw: res.raw };
   }
 
-  const statusStr = checkRes ? checkRes.status : 'pending';
-  return { success: false, status: statusStr, donation, raw: checkRes };
+  return { success: false, status: 'pending', donation, raw: res.raw };
 }
 
 /**

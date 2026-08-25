@@ -70,7 +70,7 @@ function adminPanelMenu() {
       Markup.button.callback('⚙️ Pengaturan Toko', 'admin_settings'),
     ],
     [
-      Markup.button.callback('💳 Config Pakasir', 'adm_pakasir_config'),
+      Markup.button.callback('💳 Config PayHook', 'adm_payhook_config'),
       Markup.button.callback('💾 Backup & Restore', 'admin_backup_restore'),
     ],
     [
@@ -105,17 +105,21 @@ function donationPresetMenu() {
 }
 
 /**
- * Donation Action Menu for generated QRIS
+ * Donation Action Menu for generated payment link
  */
-function donationActionMenu(nominal, refNo = null) {
+function donationActionMenu(nominal, refNo = null, paymentUrl = null) {
   const buttons = [];
+  if (paymentUrl) {
+    buttons.push([
+      Markup.button.url('💳 Bayar Sekarang', paymentUrl),
+    ]);
+  }
   if (refNo) {
     buttons.push([
       Markup.button.callback('🔄 Cek Status Pembayaran', `donate_checkpay_${refNo}`),
     ]);
   }
   buttons.push([
-    Markup.button.callback('✅ Konfirmasi Manual', `donate_confirm_${nominal}`),
     Markup.button.callback('🔄 Nominal Lain', 'menu_donate'),
   ]);
   buttons.push([

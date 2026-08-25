@@ -150,7 +150,8 @@ async function showOrderDetail(ctx, orderId) {
   const buttons = [];
 
   if (['pending', 'waiting_payment'].includes(order.status)) {
-    buttons.push([Markup.button.callback('💳 Bayar Dengan QRIS', `order_qris_${order.id}`)]);
+    const payData = await orderService.createOrderQris(order.id);
+    buttons.push([Markup.button.url('💳 Bayar Sekarang', payData.payment_url)]);
     buttons.push([Markup.button.callback('🔄 Cek Status Pembayaran', `order_checkpay_${order.id}`)]);
   }
 
@@ -168,58 +169,38 @@ async function showOrderDetail(ctx, orderId) {
 }
 
 /**
- * Display Mustika QRIS for an order
+ * Display Payment Link for an order
  */
 async function showOrderQris(ctx, orderId) {
   try {
     if (ctx.callbackQuery) {
-      await ctx.answerCbQuery('🔄 Memproses QRIS Pembayaran...').catch(() => {});
+      await ctx.answerCbQuery('🔄 Mengambil Link Pembayaran...').catch(() => {});
     }
 
-    const user = ctx.from;
-    const customerName = [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || 'Pelanggan';
-
-    const sendingMsg = await ctx.reply(`⏳ <i>Membuat Kode QRIS Pakasir untuk Order #${orderId}...</i>`, { parse_mode: 'HTML' });
-
-    const qrisData = await orderService.createOrderPakasirQris(orderId, customerName, user.id);
+    const payData = await orderService.createOrderQris(orderId);
     const order = orderService.getOrderById(orderId);
 
     const caption =
-      `💳 <b>KODE QRIS PEMBAYARAN ORDER #${orderId}</b>\n` +
+      `💳 <b>PEMBAYARAN ORDER #${orderId}</b>\n` +
       `━━━━━━━━━━━━━━━━━━━\n\n` +
       `<b>Produk:</b> ${escapeHtml(order.productName)}\n` +
       `💰 <b>Total Bayar:</b> ${formatCurrency(order.total)}\n` +
-      `🏷️ <b>Order ID:</b> <code>${qrisData.order_id || orderId}</code>\n\n` +
-      `📲 <b>Langkah Pembayaran:</b>\n` +
-      `1. Tangkap layar (screenshot) / simpan gambar QRIS di bawah ini.\n` +
-      `2. Buka aplikasi e-Wallet atau Mobile Banking Anda.\n` +
-      `3. Scan QRIS dan lakukan konfirmasi pembayaran sejumlah <b>${formatCurrency(order.total)}</b>.\n\n` +
-      `<i>Setelah membayar, tekan <b>[🔄 Cek Status Pembayaran]</b> untuk memverifikasi secara otomatis.</i>`;
+      `🏷️ <b>Order ID:</b> <code>${orderId}</code>\n\n` +
+      `📲 <b>Link Pembayaran Anda:</b>\n` +
+      `<code>${payData.payment_url}</code>\n\n` +
+      `<i>Silakan klik tombol <b>[💳 Bayar Sekarang]</b> untuk melakukan pembayaran. Setelah bayar, tekan <b>[🔄 Cek Status Pembayaran]</b> untuk memverifikasi secara otomatis.</i>`;
 
     const buttons = [
+      [Markup.button.url('💳 Bayar Sekarang', payData.payment_url)],
       [Markup.button.callback('🔄 Cek Status Pembayaran', `order_checkpay_${orderId}`)],
       [Markup.button.callback('📋 Detail Order', `order_${orderId}`)],
       navRow('my_orders'),
     ];
 
-    await ctx.deleteMessage(sendingMsg.message_id).catch(() => {});
-
-    if (qrisData.imageBuffer) {
-      await ctx.replyWithPhoto(
-        { source: qrisData.imageBuffer },
-        { caption, parse_mode: 'HTML', reply_markup: { inline_keyboard: buttons } }
-      );
-    } else if (qrisData.qr_url) {
-      await ctx.replyWithPhoto(
-        qrisData.qr_url,
-        { caption, parse_mode: 'HTML', reply_markup: { inline_keyboard: buttons } }
-      );
-    } else {
-      await ctx.reply(caption, { parse_mode: 'HTML', reply_markup: { inline_keyboard: buttons } });
-    }
+    return safeEditOrReply(ctx, caption, { reply_markup: { inline_keyboard: buttons } });
   } catch (err) {
-    logger.error(`Failed to show order QRIS (${orderId}):`, err.message);
-    await ctx.reply(`❌ <b>Gagal menampilkan QRIS:</b> ${escapeHtml(err.message)}`, {
+    logger.error(`Failed to show order payment (${orderId}):`, err.message);
+    await ctx.reply(`❌ <b>Gagal menampilkan pembayaran:</b> ${escapeHtml(err.message)}`, {
       parse_mode: 'HTML',
       reply_markup: { inline_keyboard: [navRow(`order_${orderId}`)] },
     });
@@ -227,26 +208,25 @@ async function showOrderQris(ctx, orderId) {
 }
 
 /**
- * Check payment status of an order via Pakasir API
+ * Check payment status of an order via Custom API (https://store.arasyarafi.xyz/api/payment/status?order_id=...)
  */
 async function checkOrderPayment(ctx, orderId) {
   try {
     if (ctx.callbackQuery) {
-      await ctx.answerCbQuery('🔄 Memeriksa status ke Pakasir...').catch(() => {});
+      await ctx.answerCbQuery('🔄 Memeriksa status pembayaran...').catch(() => {});
     }
 
-    const checkRes = await orderService.checkOrderPakasirPayment(orderId);
+    const checkRes = await orderService.checkOrderPayhookPayment(orderId);
 
     if (checkRes.isPaid) {
       const order = checkRes.order || orderService.getOrderById(orderId);
       const notifText =
-        `🎉 <b>PEMBAYARAN SUCCESS!</b>\n\n` +
-        `Pembayaran untuk <b>Order #${orderId}</b> telah BERHASIL diverifikasi melalui Pakasir.\n` +
+        `🎉 <b>PEMBAYARAN BERHASIL!</b>\n\n` +
+        `Pembayaran untuk <b>Order #${orderId}</b> telah BERHASIL diverifikasi.\n` +
         `<b>Produk:</b> ${escapeHtml(order.productName)}\n` +
         `<b>Total:</b> ${formatCurrency(order.total)}\n` +
-        (checkRes.raw?.customer_name ? `<b>Pembayar:</b> ${escapeHtml(checkRes.raw.customer_name)}\n` : '') +
         `<b>Status:</b> ✅ ${formatOrderStatus(order.status)}\n\n` +
-        `Pesanan Anda sedang diproses oleh penjual/sistem. Terima kasih!`;
+        `Pesanan Anda sedang diproses oleh sistem/penjual. Terima kasih!`;
 
       await ctx.reply(notifText, {
         parse_mode: 'HTML',
@@ -259,30 +239,23 @@ async function checkOrderPayment(ctx, orderId) {
         },
       });
 
-      // Notify seller / admins about successful payment
-      const adminNotif =
-        `✅ <b>PEMBAYARAN OTOMATIS BERHASIL (PAKASIR)</b>\n\n` +
-        `<b>Order:</b> #${orderId}\n` +
-        `<b>Produk:</b> ${escapeHtml(order.productName)}\n` +
-        `<b>Total:</b> ${formatCurrency(order.total)}\n` +
-        `<b>Order ID:</b> <code>${order.paymentRefNo || orderId}</code>`;
-
-      // Start animated fulfillment & admin notification loop
+      // Start automated fulfillment
       fulfillmentService.startFulfillment(ctx.telegram, order);
     } else {
-      const rawStatus = checkRes.status || (checkRes.raw && checkRes.raw.status) || 'pending';
-      const statusDesc = rawStatus === 'pending' ? 'Belum Dibayar / Pending' : rawStatus;
+      const order = orderService.getOrderById(orderId);
+      const payUrl = order?.paymentUrl || `https://store.arasyarafi.xyz/pay?pay=${order?.total || 0}&order_id=${orderId}`;
+
       await ctx.reply(
         `⏳ <b>PEMBAYARAN BELUM DITERIMA</b>\n\n` +
         `<b>Order:</b> #${orderId}\n` +
-        `<b>Status Pakasir:</b> <i>${statusDesc}</i>\n\n` +
-        `Jika Anda sudah mentransfer, mohon tunggu beberapa saat lalu tekan tombol <b>Cek Status Pembayaran</b> kembali.`,
+        `<b>Status Gateway:</b> <i>Belum Dibayar (status: 0)</i>\n\n` +
+        `Silakan selesaikan pembayaran via link pembayaran, lalu tekan tombol <b>Cek Status Pembayaran</b> kembali.`,
         {
           parse_mode: 'HTML',
           reply_markup: {
             inline_keyboard: [
-              [Markup.button.callback('🔄 Cek Status Lagi', `order_checkpay_${orderId}`)],
-              [Markup.button.callback('💳 Bayar Dengan QRIS', `order_qris_${orderId}`)],
+              [Markup.button.url('💳 Bayar Sekarang', payUrl)],
+              [Markup.button.callback('🔄 Cek Status Pembayaran', `order_checkpay_${orderId}`)],
               [Markup.button.callback('📋 Detail Order', `order_${orderId}`)],
             ],
           },
@@ -431,6 +404,11 @@ function register(bot) {
   });
 
   bot.action(/^order_pay_(ORD-\d+)$/, async (ctx) => {
+    const orderId = ctx.match[1];
+    await markPaid(ctx, orderId);
+  });
+
+  bot.action(/^order_confirm_pay_(ORD-\d+)$/, async (ctx) => {
     const orderId = ctx.match[1];
     await markPaid(ctx, orderId);
   });

@@ -177,12 +177,12 @@ function getNextStatuses(currentStatus) {
   return VALID_TRANSITIONS[currentStatus] || [];
 }
 
-const qrisService = require('./qrisService');
+const arasyarafiService = require('./arasyarafiService');
 
 /**
- * Create QRIS for an order via api-mininxd
+ * Create Payment Link for an order
  * @param {string} orderId
- * @returns {Promise<{imageBuffer: Buffer, amount: number}>}
+ * @returns {Promise<object>}
  */
 async function createOrderQris(orderId) {
   const order = getOrderById(orderId);
@@ -190,16 +190,51 @@ async function createOrderQris(orderId) {
     throw new Error('Order tidak ditemukan.');
   }
 
-  const qrisData = await qrisService.createQris(order.total);
+  const paymentUrl = arasyarafiService.getPaymentUrl(order.id, order.total);
 
-  // Save QRIS generation info to order
+  // Update order status & ref
   await database.update('orders', { id: orderId }, {
+    status: 'waiting_payment',
     paymentRefNo: orderId,
-    qrisGeneratedAt: new Date().toISOString(),
+    paymentUrl,
     updatedAt: new Date().toISOString(),
   });
 
-  return qrisData;
+  return {
+    order_id: orderId,
+    payment_url: paymentUrl,
+    total_payment: order.total,
+  };
+}
+
+/**
+ * Check payment status for an order via https://store.arasyarafi.xyz/api/payment/status?order_id=...
+ * @param {string} orderId
+ * @returns {Promise<{isPaid: boolean, order?: object, status?: number, raw?: object}>}
+ */
+async function checkOrderPayhookPayment(orderId) {
+  const order = getOrderById(orderId);
+  if (!order) {
+    throw new Error('Order tidak ditemukan.');
+  }
+
+  if (order.status === 'paid' || order.status === 'completed' || order.status === 'processing') {
+    return { isPaid: true, order, status: 1 };
+  }
+
+  const res = await arasyarafiService.checkPaymentStatus(orderId);
+
+  if (res.isPaid) {
+    const result = await updateOrderStatus(orderId, 'paid');
+    const updatedOrder = result.order || getOrderById(orderId);
+    return { isPaid: true, order: updatedOrder, status: 1, raw: res.raw };
+  }
+
+  return {
+    isPaid: false,
+    status: 0,
+    raw: res.raw,
+  };
 }
 
 module.exports = {
@@ -216,7 +251,8 @@ module.exports = {
   getNextStatuses,
   isValidTransition,
   createOrderQris,
-  // Backward-compat aliases
+  checkOrderPayhookPayment,
+  checkOrderPakasirPayment: checkOrderPayhookPayment,
   createOrderPakasirQris: createOrderQris,
   createOrderMustikaQris: createOrderQris,
 };

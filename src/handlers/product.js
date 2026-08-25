@@ -247,8 +247,10 @@ async function processOrderCreation(ctx, product, note = null) {
       `<b>Ticket:</b> #${ticket.id}\n\n` +
       `⏳ <i>Tiket telah dibuat. Sesi chat akan dimulai setelah Admin/Owner merespon.</i>`;
 
+    const payData = await orderService.createOrderQris(order.id);
+
     const buttons = [
-      [Markup.button.callback('💳 Bayar Dengan QRIS', `order_qris_${order.id}`)],
+      [Markup.button.url('💳 Bayar Sekarang', payData.payment_url)],
       [Markup.button.callback('🔄 Cek Status Pembayaran', `order_checkpay_${order.id}`)],
       [Markup.button.callback('📦 Lihat Detail Order', `order_${order.id}`)],
       [Markup.button.callback('🏠 Menu Utama', 'menu_main')],

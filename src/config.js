@@ -25,8 +25,7 @@ if (ADMIN_IDS.length === 0) {
 const config = {
   BOT_TOKEN,
   ADMIN_IDS,
-  PAKASIR_SLUG: process.env.PAKASIR_SLUG || '',
-  PAKASIR_API_KEY: process.env.PAKASIR_API_KEY || '',
+  RAMASHOPE_API_KEY: process.env.RAMASHOPE_API_KEY || '',
   ITEMS_PER_PAGE: 10, // 2x5 Grid layout (10 items per page)
   DB_PATH: require('path').join(__dirname, '..', 'db.json'),
 };

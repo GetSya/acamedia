@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────
 // Donation Handler
-// Handles Mustika QRIS donation generation, custom amounts, check & history
+// Handles RamaShop QRIS donation generation, custom amounts, check & history
 // ─────────────────────────────────────────────
 const { Markup } = require('telegraf');
 const donationService = require('../services/donationService');
@@ -20,7 +20,7 @@ async function showDonationMenu(ctx) {
   if (ctx.from) donationSessions.delete(ctx.from.id);
 
   const text =
-    `🎁 <b>FITUR DONASI QRIS PAKASIR</b>\n` +
+    `🎁 <b>FITUR DONASI QRIS RAMASHOP</b>\n` +
     `━━━━━━━━━━━━━━━━━━━\n\n` +
     `Dukung toko dan pengembangan layanan kami! 🙏\n` +
     `Setiap donasi dari Anda sangat berarti untuk kelangsungan operasional dan peningkatan fasilitas bot.\n\n` +
@@ -31,22 +31,20 @@ async function showDonationMenu(ctx) {
 }
 
 /**
- * Generate and send dynamic Pakasir QRIS photo for chosen nominal
+ * Generate and send payment link for chosen nominal
  * @param {object} ctx
  * @param {number} nominal
  */
 async function handleGenerateQris(ctx, nominal) {
   try {
     if (ctx.callbackQuery) {
-      await ctx.answerCbQuery('🔄 Memproses QRIS Pakasir...').catch(() => {});
+      await ctx.answerCbQuery('🔄 Membuat Link Pembayaran Donasi...').catch(() => {});
     }
 
     const user = ctx.from;
     const customerName = [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || 'Donatur';
 
-    const sendingMsg = await ctx.reply(`⏳ <i>Sedang menggenerasi QRIS Donasi Rp ${formatCurrency(nominal)} via Pakasir...</i>`, { parse_mode: 'HTML' });
-
-    // Generate Pakasir QRIS
+    // Generate payment link
     const qrisData = await donationService.generateDonationQris({
       nominal,
       customerName,
@@ -64,38 +62,20 @@ async function handleGenerateQris(ctx, nominal) {
     });
 
     const caption =
-      `🎁 <b>KODE QRIS DONASI PAKASIR</b>\n` +
+      `🎁 <b>LINK PEMBAYARAN DONASI</b>\n` +
       `━━━━━━━━━━━━━━━━━━━\n\n` +
       `💰 <b>Nominal Donasi:</b> ${formatCurrency(nominal)}\n` +
-      `🏷️ <b>Order ID:</b> <code>${qrisData.order_id}</code>\n\n` +
-      `📲 <b>Cara Pembayaran:</b>\n` +
-      `1. Tangkap layar (screenshot) / simpan gambar QRIS ini.\n` +
-      `2. Buka aplikasi <b>e-Wallet</b> (DANA, GoPay, OVO, ShopeePay, LinkAja) atau <b>Mobile Banking</b> (BCA, Mandiri, BRI, BNI, CIMB, dll).\n` +
-      `3. Scan QRIS dan selesaikan pembayaran sebesar <b>${formatCurrency(nominal)}</b>.\n\n` +
-      `<i>Tekan <b>[🔄 Cek Status Pembayaran]</b> untuk memverifikasi pembayaran secara otomatis.</i>`;
+      `🏷️ <b>Ref ID:</b> <code>${qrisData.order_id}</code>\n\n` +
+      `📲 <b>Link Pembayaran:</b>\n` +
+      `<code>${qrisData.payment_url}</code>\n\n` +
+      `<i>Klik tombol <b>[💳 Bayar Sekarang]</b> untuk melakukan pembayaran. Setelah selesai, tekan <b>[🔄 Cek Status Pembayaran]</b>.</i>`;
 
-    const keyboard = donationActionMenu(nominal, qrisData.order_id);
+    const keyboard = donationActionMenu(nominal, qrisData.order_id, qrisData.payment_url);
 
-    // Delete loading message
-    await ctx.deleteMessage(sendingMsg.message_id).catch(() => {});
-
-    // Reply with dynamic QRIS photo or photo URL fallback
-    if (qrisData.imageBuffer) {
-      await ctx.replyWithPhoto(
-        { source: qrisData.imageBuffer },
-        { caption, parse_mode: 'HTML', ...keyboard }
-      );
-    } else if (qrisData.qr_url) {
-      await ctx.replyWithPhoto(
-        qrisData.qr_url,
-        { caption, parse_mode: 'HTML', ...keyboard }
-      );
-    } else {
-      await ctx.reply(caption, { parse_mode: 'HTML', ...keyboard });
-    }
+    return safeEditOrReply(ctx, caption, keyboard);
   } catch (err) {
-    logger.error('Failed to generate QRIS donasi:', err.message);
-    await ctx.reply(`❌ <b>Gagal menggenerasi QRIS Donasi:</b> ${escapeHtml(err.message)}`, {
+    logger.error('Failed to generate donation payment link:', err.message);
+    await ctx.reply(`❌ <b>Gagal membuat Link Pembayaran Donasi:</b> ${escapeHtml(err.message)}`, {
       parse_mode: 'HTML',
       reply_markup: { inline_keyboard: [navRow('menu_donate')] },
     });
@@ -103,14 +83,14 @@ async function handleGenerateQris(ctx, nominal) {
 }
 
 /**
- * Check donation payment status via Pakasir API
+ * Check donation payment status via arasyarafi API
  * @param {object} ctx
  * @param {string} refNo
  */
 async function handleCheckDonationPayment(ctx, refNo) {
   try {
     if (ctx.callbackQuery) {
-      await ctx.answerCbQuery('🔄 Mengecek pembayaran Pakasir...').catch(() => {});
+      await ctx.answerCbQuery('🔄 Mengecek status pembayaran...').catch(() => {});
     }
 
     const checkResult = await donationService.checkDonationPayment(refNo);
@@ -121,7 +101,7 @@ async function handleCheckDonationPayment(ctx, refNo) {
         `🎉 <b>DONASI BERHASIL DITERIMA!</b>\n` +
         `━━━━━━━━━━━━━━━━━━━\n\n` +
         `<b>ID Donasi:</b> <code>${donation.id || '-'}</code>\n` +
-        `<b>Order ID:</b> <code>${refNo}</code>\n` +
+        `<b>Deposit ID:</b> <code>${refNo}</code>\n` +
         `<b>Donatur:</b> ${escapeHtml(donation.name || 'Donatur')}\n` +
         `<b>Nominal:</b> ${formatCurrency(donation.nominal || 0)}\n` +
         `<b>Status:</b> ✅ LUNAS (Success)\n\n` +
@@ -138,17 +118,20 @@ async function handleCheckDonationPayment(ctx, refNo) {
 
       return safeEditOrReply(ctx, text, keyboard);
     } else {
-      const statusDesc = checkResult.status === 'pending' ? 'Belum Dibayar / Pending' : checkResult.status;
+      const donation = checkResult.donation;
+      const payUrl = donation?.paymentUrl ||
+        `https://store.arasyarafi.xyz/pay?pay=${donation?.nominal || 0}&order_id=${refNo}`;
       await ctx.reply(
         `⏳ <b>PEMBAYARAN BELUM DITERIMA</b>\n\n` +
-        `<b>Order ID:</b> <code>${refNo}</code>\n` +
-        `<b>Status Pakasir:</b> <i>${statusDesc}</i>\n\n` +
-        `Silakan lakukan pembayaran terlebih dahulu via QRIS, kemudian tekan tombol <b>Cek Status Pembayaran</b> kembali.`,
+        `<b>Ref ID:</b> <code>${refNo}</code>\n` +
+        `<b>Status Gateway:</b> <i>Belum Dibayar (status: 0)</i>\n\n` +
+        `Silakan selesaikan pembayaran via link, lalu tekan tombol <b>Cek Status Pembayaran</b> kembali.`,
         {
           parse_mode: 'HTML',
           reply_markup: {
             inline_keyboard: [
-              [Markup.button.callback('🔄 Cek Status Lagi', `donate_checkpay_${refNo}`)],
+              [Markup.button.url('💳 Bayar Sekarang', payUrl)],
+              [Markup.button.callback('🔄 Cek Status Pembayaran', `donate_checkpay_${refNo}`)],
               navRow('menu_donate'),
             ],
           },

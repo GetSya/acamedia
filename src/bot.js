@@ -117,6 +117,10 @@ async function start() {
     require('./database').get();
     logger.info('Database initialized.');
 
+    // Start PayHook Webhook Listener Server
+    const payhookService = require('./services/payhookService');
+    payhookService.startWebhookServer(bot.telegram);
+
     await bot.launch({
       dropPendingUpdates: true,
     });

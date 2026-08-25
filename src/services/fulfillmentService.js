@@ -149,14 +149,12 @@ async function startFulfillment(bot, order) {
       `<b>Produk:</b> ${escapeHtml(order.productName)}\n` +
       `<b>Buyer:</b> ${escapeHtml(buyer.firstName || buyer.username || buyer.id)}\n` +
       `<b>Total:</b> ${formatCurrency(order.total)}\n\n` +
-      `<i>Silakan kirim data akun (Email & Password) atau selesaikan pesanan di bawah ini.</i>`;
+      `<i>Silakan selesaikan pesanan secara manual.</i>`;
 
-    const adminButtons = Markup.inlineKeyboard([
-      [Markup.button.callback('📧 Kirim Data Akun', `adm_send_acc_${orderId}`)],
-      [Markup.button.callback('✅ Tandai Selesai', `adm_quick_done_${orderId}`)],
-    ]);
+    // No admin action buttons needed
+    const adminButtons = [];
 
-    session.lastAdminMessages = await messageService.notifyAdmins(telegram, adminText, { reply_markup: adminButtons.reply_markup });
+    session.lastAdminMessages = await messageService.notifyAdmins(telegram, adminText, { reply_markup: { inline_keyboard: adminButtons } });
   };
 
   // Send first admin notification immediately

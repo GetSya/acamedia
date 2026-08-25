@@ -67,8 +67,7 @@ const DEFAULT_DB = {
     shopDescription: 'Selamat datang di Toko Marketplace Telegram Resmi!',
     shopLogo: null, // relative path e.g. "media/logo.jpg"
     qrisCode: '00020101021126570011ID.DANA.WWW011893600915390930088102099093008810303UMI51440014ID.CO.QRIS.WWW0215ID10254040171760303UMI5204737253033605802ID5910Jojo Store6010Kota Bogor61051634163046B01',
-    pakasirSlug: '',
-    pakasirApiKey: '',
+    ramashopeApiKey: 'rg_1bee3cae4d27879998348ef69e4874',
     supportWhatsapp: '6281234567890',
     supportTelegram: 'admin_support',
     maintenance: false,
@@ -126,8 +125,7 @@ function readDB() {
     if (!db.settings.qrisCode) {
       db.settings.qrisCode = '00020101021126570011ID.DANA.WWW011893600915390930088102099093008810303UMI51440014ID.CO.QRIS.WWW0215ID10254040171760303UMI5204737253033605802ID5910Jojo Store6010Kota Bogor61051634163046B01';
     }
-    if (db.settings.pakasirSlug === undefined) db.settings.pakasirSlug = '';
-    if (db.settings.pakasirApiKey === undefined) db.settings.pakasirApiKey = '';
+    if (db.settings.ramashopeApiKey === undefined) db.settings.ramashopeApiKey = 'rg_1bee3cae4d27879998348ef69e4874';
     if (!db.settings.supportWhatsapp) db.settings.supportWhatsapp = '6281234567890';
     if (!db.settings.supportTelegram) db.settings.supportTelegram = 'admin_support';
     if (!db.settings.counters) db.settings.counters = {};
