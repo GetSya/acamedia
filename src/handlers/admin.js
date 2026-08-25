@@ -11,8 +11,7 @@ const orderService = require('../services/orderService');
 const ticketService = require('../services/ticketService');
 const messageService = require('../services/messageService');
 const donationService = require('../services/donationService');
-const payhookService = require('../services/payhookService');
-const ramashopeService = require('../services/ramashopeService');
+
 const fulfillmentService = require('../services/fulfillmentService');
 const { formatCurrency, formatDate, formatOrderStatus, formatTicketStatus, formatProductStatus, escapeHtml, truncate } = require('../utils/format');
 const { adminPanelMenu, navRow, paginationRow, safeEditOrReply } = require('../utils/keyboard');
@@ -591,8 +590,7 @@ async function showShopSettings(ctx) {
   const logoStatus = settings.shopLogo ? '🖼️ Ada Logo' : '📷 Tanpa Logo';
   const waSupport = escapeHtml(settings.supportWhatsapp || '-');
   const tgSupport = escapeHtml(settings.supportTelegram ? `@${settings.supportTelegram.replace(/^@/, '')}` : '-');
-  const token = payhookService.getToken();
-  const port = payhookService.getPort();
+  const apiKey = '';
 
   const text =
     `⚙️ <b>PENGATURAN TOKO & KONTAK SUPPORT</b>\n` +
@@ -601,7 +599,7 @@ async function showShopSettings(ctx) {
     `📝 <b>Deskripsi Toko:</b>\n${shopDesc}\n\n` +
     `📱 <b>WhatsApp Support:</b>\n<code>${waSupport}</code>\n\n` +
     `✈️ <b>Telegram Support:</b>\n<code>${tgSupport}</code>\n\n` +
-    `💳 <b>PayHook Token:</b>\n<code>${escapeHtml(token)}</code> (Port: ${port})\n`;
+    `🖼️ <b>Logo Toko:</b> ${logoStatus}\n`;
 
   const buttons = [
     [Markup.button.callback('✏️ Edit Nama Toko', 'adm_set_name')],
@@ -609,36 +607,6 @@ async function showShopSettings(ctx) {
     [Markup.button.callback('📱 Edit WA Support', 'adm_set_wasupport')],
     [Markup.button.callback('✈️ Edit Telegram Support', 'adm_set_tgsupport')],
     [Markup.button.callback('🖼️ Upload Logo Toko', 'adm_set_logo')],
-    [Markup.button.callback('💳 Config PayHook Webhook', 'adm_payhook_config')],
-    navRow('admin_panel'),
-  ];
-
-  return safeEditOrReply(ctx, text, { reply_markup: { inline_keyboard: buttons } });
-}
-
-// ── PayHook Webhook Config ──
-
-async function showPayhookConfig(ctx) {
-  if (!requireAdmin(ctx)) return;
-
-  const token = payhookService.getToken();
-  const port = payhookService.getPort();
-
-  const text =
-    `💳 <b>KONFIGURASI PAYHOOK WEBHOOK</b>\n` +
-    `━━━━━━━━━━━━━━━━━━━\n\n` +
-    `📱 <b>PayHook Webhook URL:</b>\n<code>http://[IP_SERVER]:${port}/payhook</code>\n\n` +
-    `🔑 <b>Auth Token (Bearer / X-API-Key):</b>\n<code>${escapeHtml(token)}</code>\n\n` +
-    `🌐 <b>Port Listener Local:</b> <code>${port}</code>\n\n` +
-    `📲 <b>Panduan Penggunaan PayHook:</b>\n` +
-    `1. Install & buka aplikasi PayHook di HP Android Anda.\n` +
-    `2. Tambah Webhook baru ➔ Isi <b>URL Webhook</b> di atas & <b>Token</b>.\n` +
-    `3. Aktifkan listener untuk notifikasi bank / e-wallet Anda.\n` +
-    `4. Setiap transfer/QRIS masuk akan otomatis diverifikasi bot secara instan! ⚡\n`;
-
-  const buttons = [
-    [Markup.button.callback('🔑 Edit Auth Token', 'adm_set_payhook_token')],
-    [Markup.button.callback('🌐 Edit Port Listener', 'adm_set_payhook_port')],
     navRow('admin_panel'),
   ];
 
@@ -797,30 +765,20 @@ async function handleAdminInput(ctx) {
   }
 
   if (session.step === 'edit_payhook_token') {
-    try {
-      await payhookService.setPayhookConfig({ token: text.trim() });
-      clearAdminSession(ctx.from.id);
-      await ctx.reply('✅ PayHook Auth Token berhasil diupdate!', { parse_mode: 'HTML' });
-      await showPayhookConfig(ctx);
-    } catch (err) {
-      await ctx.reply(`❌ ${escapeHtml(err.message)}`);
-    }
+    clearAdminSession(ctx.from.id);
+    await ctx.reply('ℹ️ Fitur PayHook sudah dihapus.', { parse_mode: 'HTML' });
     return true;
   }
 
   if (session.step === 'edit_payhook_port') {
-    try {
-      const portNum = Number(text.trim());
-      if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
-        throw new Error('Port harus berupa angka antara 1 - 65535');
-      }
-      await payhookService.setPayhookConfig({ port: portNum });
-      clearAdminSession(ctx.from.id);
-      await ctx.reply(`✅ PayHook Port listener berhasil diupdate ke <b>${portNum}</b>! (Silakan restart bot jika port diubah)`, { parse_mode: 'HTML' });
-      await showPayhookConfig(ctx);
-    } catch (err) {
-      await ctx.reply(`❌ ${escapeHtml(err.message)}`);
-    }
+    clearAdminSession(ctx.from.id);
+    await ctx.reply('ℹ️ Fitur PayHook sudah dihapus.', { parse_mode: 'HTML' });
+    return true;
+  }
+
+  if (session.step === 'edit_ramashope_key') {
+    clearAdminSession(ctx.from.id);
+    await ctx.reply('ℹ️ Fitur RamaShop sudah dihapus.', { parse_mode: 'HTML' });
     return true;
   }
 
@@ -1357,29 +1315,55 @@ function register(bot) {
 
   bot.action(['adm_payhook_config', 'adm_ramashope_config', 'adm_pakasir_config'], async (ctx) => {
     await ctx.answerCbQuery().catch(() => {});
-    await showPayhookConfig(ctx);
+    await showShopSettings(ctx);
+  });
+
+  // ── Shop Settings Edit Actions ──
+  bot.action('adm_set_name', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+    setAdminSession(ctx.from.id, { step: 'edit_shop_name' });
+    await ctx.reply('🏪 Masukkan <b>nama toko</b> baru:', { parse_mode: 'HTML' });
+  });
+
+  bot.action('adm_set_desc', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+    setAdminSession(ctx.from.id, { step: 'edit_shop_desc' });
+    await ctx.reply('📝 Masukkan <b>deskripsi toko</b> baru:', { parse_mode: 'HTML' });
+  });
+
+  bot.action('adm_set_wasupport', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+    setAdminSession(ctx.from.id, { step: 'edit_wa_support' });
+    await ctx.reply('📱 Masukkan <b>nomor WhatsApp Support</b> (angka saja, contoh: <code>628123456789</code>):', { parse_mode: 'HTML' });
+  });
+
+  bot.action('adm_set_tgsupport', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+    setAdminSession(ctx.from.id, { step: 'edit_tg_support' });
+    await ctx.reply('✈️ Masukkan <b>username Telegram Support</b> (tanpa @, contoh: <code>supportku</code>):', { parse_mode: 'HTML' });
+  });
+
+  bot.action('adm_set_logo', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!requireAdmin(ctx)) return;
+    setAdminSession(ctx.from.id, { step: 'upload_shop_logo' });
+    await ctx.reply('🖼️ Silakan <b>kirim foto/gambar logo toko</b> di chat ini:', { parse_mode: 'HTML' });
+  });
+
+  bot.action('adm_set_ramashope_key', async (ctx) => {
+    await ctx.answerCbQuery('Fitur RamaShop sudah dihapus.').catch(() => {});
   });
 
   bot.action('adm_set_payhook_token', async (ctx) => {
-    await ctx.answerCbQuery().catch(() => {});
-    if (!requireAdmin(ctx)) return;
-    setAdminSession(ctx.from.id, { step: 'edit_payhook_token' });
-    await ctx.reply(
-      '🔑 Masukkan <b>PayHook Auth Token</b> baru (mis. <code>payhook_secret_token</code>):\n\n' +
-      `Current Token: <code>${escapeHtml(payhookService.getToken())}</code>`,
-      { parse_mode: 'HTML' }
-    );
+    await ctx.answerCbQuery('Fitur PayHook sudah dihapus.').catch(() => {});
   });
 
   bot.action('adm_set_payhook_port', async (ctx) => {
-    await ctx.answerCbQuery().catch(() => {});
-    if (!requireAdmin(ctx)) return;
-    setAdminSession(ctx.from.id, { step: 'edit_payhook_port' });
-    await ctx.reply(
-      '🌐 Masukkan <b>Port Listener Webhook</b> baru (mis. <code>3000</code>):\n\n' +
-      `Current Port: <code>${payhookService.getPort()}</code>`,
-      { parse_mode: 'HTML' }
-    );
+    await ctx.answerCbQuery('Fitur PayHook sudah dihapus.').catch(() => {});
   });
 
   // ── Product Image Upload Action ──
@@ -2053,15 +2037,14 @@ function register(bot) {
       return;
     }
 
-    const loadingMsg = await ctx.reply(`⏳ Membuat RamaShop QRIS sebesar <b>${formatCurrency(nominal)}</b>...`, { parse_mode: 'HTML' });
+    const loadingMsg = await ctx.reply(`⏳ Membuat QRIS sebesar <b>${formatCurrency(nominal)}</b>...`, { parse_mode: 'HTML' });
 
     try {
-      const depositData = await ramashopeService.createDeposit({ amount: nominal });
+      const depositData = await (async () => {
+        throw new Error('Metode pembayaran belum dikonfigurasi.');
+      })();
 
       let imageBuffer = null;
-      if (depositData.qrUrl) {
-        imageBuffer = await ramashopeService.fetchQrImageBuffer(depositData.qrUrl).catch(() => null);
-      }
 
       // Check if admin is currently in an active ticket session
       const ticketHandler = require('./ticket');
@@ -2073,7 +2056,7 @@ function register(bot) {
           const buyerUser = userService.getUserById(ticket.buyerId);
 
           const caption =
-            `💳 <b>TAGIHAN PEMBAYARAN RAMASHOP QRIS</b>\n` +
+            `💳 <b>TAGIHAN PEMBAYARAN QRIS</b>\n` +
             `━━━━━━━━━━━━━━━━━━━\n` +
             `<b>Nominal:</b> ${formatCurrency(nominal)}\n` +
             `<b>Deposit ID:</b> <code>${depositData.depositId}</code>\n` +
@@ -2117,7 +2100,7 @@ function register(bot) {
             ticketId: activeTicketId,
             senderId: ctx.from.id,
             senderRole: 'admin',
-            message: `[Tagihan RamaShop QRIS Dikirim: ${formatCurrency(nominal)} (Deposit: ${depositData.depositId})]`,
+            message: `[Tagihan QRIS Dikirim: ${formatCurrency(nominal)} (Deposit: ${depositData.depositId})]`,
             messageType: 'qris',
           });
 
@@ -2127,10 +2110,10 @@ function register(bot) {
           }
 
           await ctx.reply(
-            `✅ RamaShop QRIS Tagihan <b>${formatCurrency(nominal)}</b> (Deposit: <code>${depositData.depositId}</code>) berhasil dikirimkan ke buyer di Ticket <b>#${activeTicketId}</b>!`,
+            `✅ QRIS Tagihan <b>${formatCurrency(nominal)}</b> (Deposit: <code>${depositData.depositId}</code>) berhasil dikirimkan ke buyer di Ticket <b>#${activeTicketId}</b>!`,
             { parse_mode: 'HTML' }
           );
-          logger.info(`Admin ${ctx.from.id} generated RamaShop QRIS ${nominal} for ticket ${activeTicketId}`);
+          logger.info(`Admin ${ctx.from.id} generated QRIS ${nominal} for ticket ${activeTicketId}`);
           return;
         }
       }

@@ -1,19 +1,14 @@
 // ─────────────────────────────────────────────
-// Mustika Payment Gateway Service Compatibility Wrapper
-// Redirects to RamaShop Payment Gateway
+// Mustika Payment Gateway Service
+// (Tidak digunakan - stub kosong)
 // ─────────────────────────────────────────────
-const ramashopeService = require('./ramashopeService');
 
 module.exports = {
-  getApiKey: ramashopeService.getApiKey,
-  getApiUser: () => 'ramashop',
-  setMustikaConfig: async ({ apiKey }) => ramashopeService.setRamashopeConfig({ apiKey }),
-  createQris: async (data) => ramashopeService.createDeposit(data),
-  checkQris: async (refNo) => {
-    const res = await ramashopeService.checkDepositStatus(refNo);
-    const isPaid = res && (res.status === 'success' || res.status === 'already');
-    return res ? { status: isPaid ? 'success' : res.status, ...res } : { status: 'failed' };
-  },
-  fetchQrImageBuffer: ramashopeService.fetchQrImageBuffer,
-  getBalance: async () => ramashopeService.getBalance(),
+  getApiKey: () => '',
+  getApiUser: () => '',
+  setMustikaConfig: async () => {},
+  createQris: async () => { throw new Error('Mustika tidak dikonfigurasi.'); },
+  checkQris: async () => ({ status: 'failed' }),
+  fetchQrImageBuffer: async () => { throw new Error('Mustika tidak dikonfigurasi.'); },
+  getBalance: async () => null,
 };

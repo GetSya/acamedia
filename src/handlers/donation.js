@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────
 // Donation Handler
-// Handles RamaShop QRIS donation generation, custom amounts, check & history
+// Handles QRIS donation generation, custom amounts, check & history
 // ─────────────────────────────────────────────
 const { Markup } = require('telegraf');
 const donationService = require('../services/donationService');
@@ -20,7 +20,7 @@ async function showDonationMenu(ctx) {
   if (ctx.from) donationSessions.delete(ctx.from.id);
 
   const text =
-    `🎁 <b>FITUR DONASI QRIS RAMASHOP</b>\n` +
+    `🎁 <b>FITUR DONASI</b>\n` +
     `━━━━━━━━━━━━━━━━━━━\n\n` +
     `Dukung toko dan pengembangan layanan kami! 🙏\n` +
     `Setiap donasi dari Anda sangat berarti untuk kelangsungan operasional dan peningkatan fasilitas bot.\n\n` +
