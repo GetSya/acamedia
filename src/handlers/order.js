@@ -22,10 +22,10 @@ async function showMyOrders(ctx, page = 0) {
   if (!user) return;
 
   const allOrders = orderService.getOrdersByBuyer(user.id);
-  const activeOrders = allOrders.filter((o) => !['completed', 'cancelled', 'refunded'].includes(o.status));
-  const finishedOrders = allOrders.filter((o) => ['completed', 'cancelled', 'refunded'].includes(o.status));
+  const activeOrders = allOrders.filter((o) => !['completed', 'cancelled', 'refunded', 'failed'].includes(o.status));
+  const finishedOrders = allOrders.filter((o) => ['completed', 'cancelled', 'refunded', 'failed'].includes(o.status));
 
-  const perPage = config.ITEMS_PER_PAGE;
+  const perPage = 4;
   const totalPages = Math.max(1, Math.ceil(activeOrders.length / perPage));
   const currentPage = Math.min(page, totalPages - 1);
   const start = Math.max(0, currentPage * perPage);
@@ -35,7 +35,7 @@ async function showMyOrders(ctx, page = 0) {
     const text = `📦 <b>PESANAN AKTIF</b>\n\nTidak ada pesanan aktif saat ini.`;
     const buttons = [];
     if (finishedOrders.length > 0) {
-      buttons.push([Markup.button.callback(`📜 Lihat Pesanan Selesai (${finishedOrders.length})`, 'orders_finished')]);
+      buttons.push([Markup.button.callback(`📜 Lihat Riwayat Pesanan (${finishedOrders.length})`, 'orders_finished')]);
     }
     buttons.push(navRow('menu_main'));
     return safeEditOrReply(ctx, text, { reply_markup: { inline_keyboard: buttons } });
@@ -45,13 +45,14 @@ async function showMyOrders(ctx, page = 0) {
 
   pageOrders.forEach((o, i) => {
     const num = start + i + 1;
-    text += `<b>${num}.</b> #${o.id}\n`;
-    text += `    ${escapeHtml(o.productName)} | ${formatCurrency(o.total)}\n`;
-    text += `    ${formatOrderStatus(o.status)}\n\n`;
+    text += `<b>${num}.</b> <code>#${o.id}</code>\n`;
+    text += `    📦 ${escapeHtml(o.productName)}\n`;
+    text += `    💰 ${formatCurrency(o.total)} | ${formatOrderStatus(o.status)}\n\n`;
   });
 
+  // Grid: 1 kolom, 4 baris per halaman
   const buttons = pageOrders.map((o) => [
-    Markup.button.callback(`📋 #${o.id}`, `order_${o.id}`),
+    Markup.button.callback(`📋 #${o.id} — ${escapeHtml(o.productName.substring(0, 20))}`, `order_${o.id}`),
   ]);
 
   if (totalPages > 1) {
@@ -59,7 +60,7 @@ async function showMyOrders(ctx, page = 0) {
   }
 
   if (finishedOrders.length > 0) {
-    buttons.push([Markup.button.callback(`📜 Lihat Pesanan Selesai (${finishedOrders.length})`, 'orders_finished')]);
+    buttons.push([Markup.button.callback(`📜 Riwayat Pesanan (${finishedOrders.length})`, 'orders_finished')]);
   }
 
   buttons.push(navRow('menu_main'));
@@ -75,16 +76,16 @@ async function showFinishedOrders(ctx, page = 0) {
   if (!user) return;
 
   const allOrders = orderService.getOrdersByBuyer(user.id);
-  const finishedOrders = allOrders.filter((o) => ['completed', 'cancelled', 'refunded'].includes(o.status));
+  const finishedOrders = allOrders.filter((o) => ['completed', 'cancelled', 'refunded', 'failed'].includes(o.status));
 
-  const perPage = config.ITEMS_PER_PAGE;
+  const perPage = 4;
   const totalPages = Math.max(1, Math.ceil(finishedOrders.length / perPage));
   const currentPage = Math.min(page, totalPages - 1);
   const start = Math.max(0, currentPage * perPage);
   const pageOrders = finishedOrders.slice(start, start + perPage);
 
   if (finishedOrders.length === 0) {
-    const text = `📜 <b>PESANAN SELESAI</b>\n\nBelum ada pesanan yang selesai.`;
+    const text = `📜 <b>RIWAYAT PESANAN</b>\n\nBelum ada riwayat pesanan.`;
     const buttons = [
       [Markup.button.callback('◀️ Pesanan Aktif', 'my_orders')],
       navRow('menu_main'),
@@ -92,17 +93,18 @@ async function showFinishedOrders(ctx, page = 0) {
     return safeEditOrReply(ctx, text, { reply_markup: { inline_keyboard: buttons } });
   }
 
-  let text = `📜 <b>RIWAYAT PESANAN SELESAI</b> (${finishedOrders.length})\n\n`;
+  let text = `📜 <b>RIWAYAT PESANAN</b> (${finishedOrders.length})\n\n`;
 
   pageOrders.forEach((o, i) => {
     const num = start + i + 1;
-    text += `<b>${num}.</b> #${o.id}\n`;
-    text += `    ${escapeHtml(o.productName)} | ${formatCurrency(o.total)}\n`;
-    text += `    ${formatOrderStatus(o.status)}\n\n`;
+    text += `<b>${num}.</b> <code>#${o.id}</code>\n`;
+    text += `    📦 ${escapeHtml(o.productName)}\n`;
+    text += `    💰 ${formatCurrency(o.total)} | ${formatOrderStatus(o.status)}\n\n`;
   });
 
+  // Grid: 1 kolom, 4 baris per halaman
   const buttons = pageOrders.map((o) => [
-    Markup.button.callback(`📋 #${o.id}`, `order_${o.id}`),
+    Markup.button.callback(`📋 #${o.id} — ${escapeHtml(o.productName.substring(0, 20))}`, `order_${o.id}`),
   ]);
 
   if (totalPages > 1) {
@@ -150,17 +152,18 @@ async function showOrderDetail(ctx, orderId) {
   const buttons = [];
 
   if (['pending', 'waiting_payment'].includes(order.status)) {
-    const payData = await orderService.createOrderQris(order.id);
-    buttons.push([Markup.button.url('💳 Bayar Sekarang', payData.payment_url)]);
+    // Tampilkan link bayar jika paymentUrl sudah tersimpan, jika belum arahkan ke tombol generate
+    if (order.paymentUrl) {
+      buttons.push([Markup.button.url('💳 Bayar Sekarang', order.paymentUrl)]);
+    } else {
+      buttons.push([Markup.button.callback('💳 Generate Link Pembayaran', `order_qris_${order.id}`)]);
+    }
     buttons.push([Markup.button.callback('🔄 Cek Status Pembayaran', `order_checkpay_${order.id}`)]);
+    buttons.push([Markup.button.callback('❌ Batalkan Order', `order_cancel_${order.id}`)]);
   }
 
   if (order.ticketId) {
     buttons.push([Markup.button.callback('🎫 Buka Ticket', `ticket_open_${order.ticketId}`)]);
-  }
-
-  if (['pending', 'waiting_payment'].includes(order.status)) {
-    buttons.push([Markup.button.callback('❌ Batalkan Order', `order_cancel_${order.id}`)]);
   }
 
   buttons.push(navRow('my_orders'));
@@ -387,35 +390,36 @@ function register(bot) {
     await showFinishedOrders(ctx, page);
   });
 
-  bot.action(/^order_(ORD-\d+)$/, async (ctx) => {
-    await ctx.answerCbQuery().catch(() => {});
-    const orderId = ctx.match[1];
-    await showOrderDetail(ctx, orderId);
-  });
-
-  bot.action(/^order_qris_(ORD-\d+)$/, async (ctx) => {
+  bot.action(/^order_qris_(.+)$/, async (ctx) => {
     const orderId = ctx.match[1];
     await showOrderQris(ctx, orderId);
   });
 
-  bot.action(/^order_checkpay_(ORD-\d+)$/, async (ctx) => {
+  bot.action(/^order_checkpay_(.+)$/, async (ctx) => {
     const orderId = ctx.match[1];
     await checkOrderPayment(ctx, orderId);
   });
 
-  bot.action(/^order_pay_(ORD-\d+)$/, async (ctx) => {
+  bot.action(/^order_confirm_pay_(.+)$/, async (ctx) => {
     const orderId = ctx.match[1];
     await markPaid(ctx, orderId);
   });
 
-  bot.action(/^order_confirm_pay_(ORD-\d+)$/, async (ctx) => {
+  bot.action(/^order_pay_(.+)$/, async (ctx) => {
     const orderId = ctx.match[1];
     await markPaid(ctx, orderId);
   });
 
-  bot.action(/^order_cancel_(ORD-\d+)$/, async (ctx) => {
+  bot.action(/^order_cancel_(.+)$/, async (ctx) => {
     const orderId = ctx.match[1];
     await cancelOrder(ctx, orderId);
+  });
+
+  // Handler generik detail order — harus setelah semua sub-actions
+  bot.action(/^order_(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    const orderId = ctx.match[1];
+    await showOrderDetail(ctx, orderId);
   });
 }
 

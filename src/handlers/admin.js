@@ -242,28 +242,38 @@ async function showAdminCategories(ctx) {
 async function showAdminOrders(ctx, page = 0) {
   if (!requireAdmin(ctx)) return;
 
-  const orders = orderService.getAllOrders();
-  const perPage = config.ITEMS_PER_PAGE;
-  const totalPages = Math.max(1, Math.ceil(orders.length / perPage));
+  const allOrders = orderService.getAllOrders();
+
+  // Hanya tampilkan order yang belum final (pending/proses)
+  const ACTIVE_STATUSES = ['pending', 'waiting_payment', 'processing', 'payment_review'];
+  const activeOrders = allOrders.filter((o) => ACTIVE_STATUSES.includes(o.status));
+
+  const perPage = 4;
+  const totalPages = Math.max(1, Math.ceil(activeOrders.length / perPage));
   const currentPage = Math.min(page, totalPages - 1);
   const start = currentPage * perPage;
-  const pageOrders = orders.slice(start, start + perPage);
+  const pageOrders = activeOrders.slice(start, start + perPage);
 
-  let text = `🛒 <b>SEMUA ORDER</b> (${orders.length})\n\n`;
+  let text =
+    `🛒 <b>ORDERS — MENUNGGU PROSES</b>\n` +
+    `━━━━━━━━━━━━━━━━━━━\n` +
+    `📋 Total Aktif: <b>${activeOrders.length}</b>\n` +
+    `━━━━━━━━━━━━━━━━━━━\n\n`;
 
-  if (orders.length === 0) {
-    text += 'Belum ada order.';
+  if (activeOrders.length === 0) {
+    text += '<i>Tidak ada order yang perlu diproses.</i>';
   } else {
     pageOrders.forEach((o, i) => {
       const num = start + i + 1;
-      text += `<b>${num}.</b> #${o.id}\n`;
-      text += `    ${escapeHtml(o.productName)} | ${formatCurrency(o.total)}\n`;
-      text += `    ${formatOrderStatus(o.status)}\n\n`;
+      text += `<b>${num}.</b> <code>#${o.id}</code>\n`;
+      text += `    📦 ${escapeHtml(o.productName)}\n`;
+      text += `    💰 ${formatCurrency(o.total)} | ${formatOrderStatus(o.status)}\n\n`;
     });
   }
 
+  // Grid: 1 kolom, 4 baris per halaman
   const buttons = pageOrders.map((o) => [
-    Markup.button.callback(`📋 #${o.id}`, `adm_order_${o.id}`),
+    Markup.button.callback(`📋 #${o.id} — ${escapeHtml(o.productName.substring(0, 22))}`, `adm_order_${o.id}`),
   ]);
 
   if (totalPages > 1) {
@@ -298,12 +308,16 @@ async function showAdminOrderDetail(ctx, orderId) {
     `<b>Ticket:</b> ${order.ticketId ? '#' + order.ticketId : '-'}\n` +
     `<b>Dibuat:</b> ${formatDate(order.createdAt)}\n`;
 
-  const buttons = [
-    [
+  const buttons = [];
+
+  // Tombol payment hanya tampil jika order BELUM final (bukan cancelled/selesai)
+  const FINAL_STATUSES = ['paid', 'completed', 'delivered', 'sent', 'cancelled', 'failed', 'refunded'];
+  if (!FINAL_STATUSES.includes(order.status)) {
+    buttons.push([
       Markup.button.callback('✅ Payment Berhasil', `adm_quick_pay_${order.id}_paid`),
-      Markup.button.callback('❌ Payment Gagal', `adm_quick_pay_${order.id}_cancelled`),
-    ],
-  ];
+      Markup.button.callback('❌ Batalkan Order', `adm_quick_pay_${order.id}_cancelled`),
+    ]);
+  }
 
   const nextStatuses = orderService.getNextStatuses(order.status);
   if (nextStatuses.length > 0) {
@@ -1615,16 +1629,30 @@ function register(bot) {
     await showAdminOrders(ctx, parseInt(ctx.match[1], 10));
   });
 
-  bot.action(/^adm_order_(ORD-\d+)$/, async (ctx) => {
+  // Stub untuk tab lama (backward compat tombol yang sudah di-cache Telegram)
+  bot.action(/^adm_orders_tab_(pending|done|cancel)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await showAdminOrders(ctx, 0);
+  });
+
+  bot.action(/^adm_orders_page_(pending|done|cancel)_(\d+)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => {});
+    await showAdminOrders(ctx, parseInt(ctx.match[2], 10));
+  });
+
+  bot.action(/^adm_order_(.+)$/, async (ctx) => {
     await ctx.answerCbQuery().catch(() => {});
     await showAdminOrderDetail(ctx, ctx.match[1]);
   });
 
   // Quick Payment status action
-  bot.action(/^adm_quick_pay_(ORD-\d+)_(paid|cancelled)$/, async (ctx) => {
+  bot.action(/^adm_quick_pay_(.+)_(paid|cancelled)$/, async (ctx) => {
     if (!requireAdmin(ctx)) return;
-    const orderId = ctx.match[1];
-    const targetStatus = ctx.match[2];
+    // Pisahkan orderId dan targetStatus dari akhir string
+    const raw = ctx.match[0].replace('adm_quick_pay_', '');
+    const lastUnderscore = raw.lastIndexOf('_');
+    const orderId = raw.substring(0, lastUnderscore);
+    const targetStatus = raw.substring(lastUnderscore + 1);
 
     const result = await orderService.updateOrderStatus(orderId, targetStatus);
     if (!result.success) {
@@ -1632,7 +1660,7 @@ function register(bot) {
       return;
     }
 
-    const label = targetStatus === 'paid' ? '✅ Payment Berhasil' : '❌ Payment Gagal / Dibatalkan';
+    const label = targetStatus === 'paid' ? '✅ Payment Berhasil' : '❌ Order Dibatalkan';
     await ctx.answerCbQuery(`Status payment: ${label}`);
 
     const order = orderService.getOrderById(orderId);
@@ -1666,10 +1694,13 @@ function register(bot) {
     await showAdminOrderDetail(ctx, orderId);
   });
 
-  bot.action(/^adm_order_status_(ORD-\d+)_(.+)$/, async (ctx) => {
+  bot.action(/^adm_order_status_(.+)_([^_]+)$/, async (ctx) => {
     if (!requireAdmin(ctx)) return;
-    const orderId = ctx.match[1];
-    const newStatus = ctx.match[2];
+    // Pisahkan orderId dan newStatus dari akhir string
+    const raw = ctx.match[0].replace('adm_order_status_', '');
+    const lastUnderscore = raw.lastIndexOf('_');
+    const orderId = raw.substring(0, lastUnderscore);
+    const newStatus = raw.substring(lastUnderscore + 1);
 
     const result = await orderService.updateOrderStatus(orderId, newStatus);
     if (!result.success) {
